@@ -6,6 +6,7 @@ import {
   addFunction,
   addCodeNode,
   deleteEdge,
+  deleteFunction,
   deleteNode,
   duplicateNode,
   mapInput,
@@ -148,6 +149,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "deleteNode") {
       const current = currentModel(context);
       await deleteNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
+      return;
+    }
+
+    if (message?.type === "deleteFunction") {
+      const current = currentModel(context);
+      await deleteFunction(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       await publishModel(context, current);
       return;

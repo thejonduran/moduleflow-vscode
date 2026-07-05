@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
+import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows } from "../graph/flowDiscovery";
 import { ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
 import { loadModelFromFile, moduleFlowModulePath, readText, writeText } from "./loadModel";
@@ -157,6 +158,18 @@ function removeReferencesToSource(model: ModuleFlowModel, source: string): void 
       node.source = "input";
     }
   }
+}
+
+function outputSourcesForNode(node: ModuleFlowNode): string[] {
+  if (hasVariable(node)) {
+    return [node.variableName];
+  }
+
+  if (node.kind === "code") {
+    return codeOutputs(node.code);
+  }
+
+  return [];
 }
 
 function duplicateNodeId(model: ModuleFlowModel, node: ModuleFlowNode): string {
@@ -457,6 +470,25 @@ export async function duplicateNode(targetUri: vscode.Uri, model: ModuleFlowMode
   }
 
   model.nodes.push(duplicatedNode);
+  await persistModel(targetUri, model);
+}
+
+export async function deleteFunction(targetUri: vscode.Uri, model: ModuleFlowModel, message: { inputNodeId: string }): Promise<void> {
+  const flow = discoverFlows(model.nodes, model.controlFlow).flows.find((item) => item.input.id === message.inputNodeId);
+  if (!flow) {
+    return;
+  }
+
+  const deletedNodeIds = new Set(flow.nodes.map((node) => node.id));
+  const sourcesToRemove = new Set(flow.nodes.flatMap(outputSourcesForNode));
+
+  model.nodes = model.nodes.filter((node) => !deletedNodeIds.has(node.id));
+  model.controlFlow = model.controlFlow.filter((edge) => !deletedNodeIds.has(edge.from) && !deletedNodeIds.has(edge.to));
+
+  for (const source of sourcesToRemove) {
+    removeReferencesToSource(model, source);
+  }
+
   await persistModel(targetUri, model);
 }
 

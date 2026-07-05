@@ -259,6 +259,13 @@ assert.deepEqual(
     { from: "lookup-call", to: "lookup-return" }
   ]
 );
+const withoutLookupNodes = multiFunctionModel.nodes.filter((node) => !["lookup-input", "lookup-call", "lookup-return"].includes(node.id));
+const withoutLookupControlFlow = multiFunctionModel.controlFlow.filter(
+  (edge) => !edge.from.startsWith("lookup") && !edge.to.startsWith("lookup")
+);
+const withoutLookupSource = buildRegion("main", withoutLookupNodes, withoutLookupControlFlow);
+assert.match(withoutLookupSource, /export async function main\(input\)/);
+assert.doesNotMatch(withoutLookupSource, /export async function lookupUser\(input\)/);
 const moduleFlowTools = parseModuleFlowFunctions(multiFunctionSource);
 assert.deepEqual(moduleFlowTools.map((item) => item.name), ["main", "lookupUser"]);
 assert.deepEqual(moduleFlowTools.map((item) => item.params.map((param) => param.name)), [["input"], ["input"]]);
