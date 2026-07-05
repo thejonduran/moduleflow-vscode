@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const { buildRegion } = require("../out/codegen/generateRegion");
 const { createModelFromSource } = require("../out/graph/jsToGraph");
-const { parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
+const { parseExports, parseLocalFunctions, parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
 const { codeOutputs } = require("../out/graph/codeOutputs");
 const { previousScopedSources } = require("../out/graph/flowDiscovery");
 
@@ -255,6 +255,44 @@ assert.deepEqual(
 const moduleFlowTools = parseModuleFlowFunctions(multiFunctionSource);
 assert.deepEqual(moduleFlowTools.map((item) => item.name), ["main", "lookupUser"]);
 assert.deepEqual(moduleFlowTools.map((item) => item.params.map((param) => param.name)), [["input"], ["input"]]);
+
+const wrapperTools = parseExports(`
+import axios from "axios";
+
+export function createApiClient(baseURL, token) {
+  return axios.create({ baseURL, headers: { Authorization: token } });
+}
+
+export async function getJson(client, path) {
+  const response = await client.get(path);
+  return response.data;
+}
+
+export const postJson = async (client, path, data) => {
+  const response = await client.post(path, data);
+  return response.data;
+};
+`);
+assert.deepEqual(wrapperTools.map((item) => item.name), ["createApiClient", "getJson", "postJson"]);
+assert.deepEqual(wrapperTools.map((item) => item.kind), ["function", "function", "const"]);
+assert.deepEqual(wrapperTools.map((item) => item.params.map((param) => param.name)), [
+  ["baseURL", "token"],
+  ["client", "path"],
+  ["client", "path", "data"]
+]);
+
+const localToolsWithRegion = parseLocalFunctions(`
+function helperOutside(input) {
+  return input;
+}
+
+// @moduleflow:start
+export async function main(input) {
+  return input;
+}
+// @moduleflow:end
+`);
+assert.deepEqual(localToolsWithRegion.map((item) => item.name), ["helperOutside"]);
 
 const formattedSource = `
 // @moduleflow:start

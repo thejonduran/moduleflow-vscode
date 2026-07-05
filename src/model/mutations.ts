@@ -67,19 +67,14 @@ function findToolExport(model: ModuleFlowModel, modulePath: string, exportName: 
     ?.exports.find((item) => item.name === exportName);
 }
 
-function mergeImports(model: ModuleFlowModel, imports: ModuleFlowModel["imports"]): void {
-  const importsByPath = new Map(model.imports.map((item) => [item.modulePath, item]));
+function findUniqueToolExport(model: ModuleFlowModel, exportName: string): { modulePath: string; toolExport: ModuleExport } | undefined {
+  const matches = model.imports.flatMap((toolModule) =>
+    toolModule.exports
+      .filter((item) => item.name === exportName)
+      .map((toolExport) => ({ modulePath: toolModule.modulePath, toolExport }))
+  );
 
-  for (const importedModule of imports) {
-    const existing = importsByPath.get(importedModule.modulePath);
-    if (!existing) {
-      model.imports.push(importedModule);
-      continue;
-    }
-
-    const existingExportNames = new Set(existing.exports.map((item) => item.name));
-    existing.exports.push(...importedModule.exports.filter((item) => !existingExportNames.has(item.name)));
-  }
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function updateReturn(model: ModuleFlowModel, returnNodeId: string, source: string): void {
@@ -213,18 +208,31 @@ export async function deleteControlFlowEdge(targetUri: vscode.Uri, model: Module
 
 export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { modulePath: string; exportName: string; methodName?: string | null; position?: { x: number; y: number } }): Promise<void> {
   let toolExport = findToolExport(model, message.modulePath, message.exportName);
+  let modulePath = message.modulePath;
   if (!toolExport) {
     const latestModel = await loadModelFromFile(targetUri);
-    mergeImports(model, latestModel.imports);
+    model.imports = latestModel.imports;
     toolExport = findToolExport(model, message.modulePath, message.exportName);
+    if (!toolExport) {
+      const uniqueMatch = findUniqueToolExport(model, message.exportName);
+      if (uniqueMatch) {
+        modulePath = uniqueMatch.modulePath;
+        toolExport = uniqueMatch.toolExport;
+      }
+    }
   }
 
   if (!toolExport) {
-    void vscode.window.showErrorMessage("ModuleFlow could not find that imported export.");
+    const availableExports = model.imports
+      .map((toolModule) => `${toolModule.modulePath}: ${toolModule.exports.map((item) => item.name).join(", ")}`)
+      .join("; ");
+    void vscode.window.showErrorMessage(
+      `ModuleFlow could not find ${message.exportName} from ${message.modulePath}. Available tools: ${availableExports || "none"}.`
+    );
     return;
   }
 
-  if (message.modulePath === moduleFlowModulePath) {
+  if (modulePath === moduleFlowModulePath) {
     void vscode.window.showWarningMessage(
       `ModuleFlow added ${toolExport.name}(). Recursive calls are allowed, but make sure the function has a terminating condition.`
     );
@@ -265,7 +273,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
       id: `node-${Date.now()}`,
       kind: "classInstance",
       label: `new ${toolExport.name}`,
-      modulePath: message.modulePath,
+      modulePath,
       exportName: toolExport.name,
       callName: toolExport.callName,
       params: toolExport.params,
@@ -282,7 +290,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
     id: `node-${Date.now()}`,
     kind: "call",
     label: toolExport.name,
-    modulePath: message.modulePath,
+    modulePath,
     exportName: toolExport.name,
     callName: toolExport.callName,
     params: toolExport.params,
