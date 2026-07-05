@@ -45,7 +45,8 @@ const model = {
   controlFlow: [
     { from: "input", to: "distance-node" },
     { from: "distance-node", to: "summary-node" },
-    { from: "summary-node", to: "return" }
+    { from: "summary-node", to: "log-node" },
+    { from: "log-node", to: "return" }
   ],
   nodes: [
     {
@@ -113,11 +114,19 @@ const model = {
       description: "Unconnected canvas-only draft"
     },
     {
+      id: "log-node",
+      kind: "code",
+      label: "code",
+      code: "const debugSummary = summary;\nconsole.log(\"summary\", debugSummary);",
+      position: { x: 1240, y: 180 },
+      description: "Inspect the generated summary"
+    },
+    {
       id: "return",
       kind: "return",
       label: "return",
       source: "summary",
-      position: { x: 1240, y: 190 },
+      position: { x: 1540, y: 190 },
       description: "Preview return value"
     }
   ]
@@ -169,7 +178,7 @@ const html = `<!doctype html>
   </script>
   <script id="moduleflow-data" type="application/json">${escapeScriptJson(JSON.stringify(model))}</script>
   <div id="root"></div>
-  <script src="./webview.js"></script>
+  <script src="./webview.js?v=${Date.now()}"></script>
 </body>
 </html>
 `;

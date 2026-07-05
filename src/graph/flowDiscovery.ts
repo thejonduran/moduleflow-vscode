@@ -1,4 +1,5 @@
 import { ControlFlowEdge, ModuleFlowNode } from "../types";
+import { codeOutputs } from "./codeOutputs";
 
 export type DiscoveredFlow = {
   input: Extract<ModuleFlowNode, { kind: "input" }>;
@@ -82,5 +83,15 @@ export function previousScopedSources(
   }
 
   const targetIndex = flow.nodes.findIndex((node) => node.id === targetNodeId);
-  return flow.nodes.slice(0, targetIndex).flatMap((node) => "variableName" in node ? [node.variableName] : []);
+  return flow.nodes.slice(0, targetIndex).flatMap((node) => {
+    if ("variableName" in node) {
+      return [node.variableName];
+    }
+
+    if (node.kind === "code") {
+      return codeOutputs(node.code);
+    }
+
+    return [];
+  });
 }

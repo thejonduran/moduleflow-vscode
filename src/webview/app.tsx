@@ -1,5 +1,11 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useRef, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { javascript } from "@codemirror/lang-javascript";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { EditorState } from "@codemirror/state";
+import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import {
   Background,
   Connection,
@@ -12,19 +18,39 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useViewport,
+  useUpdateNodeInternals,
   useReactFlow,
   useEdgesState,
   useNodesState
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ModuleFlowModel, ModuleFlowNode } from "../types";
+import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows, previousScopedSources } from "../graph/flowDiscovery";
 
 declare const acquireVsCodeApi: () => {
   postMessage: (message: unknown) => void;
 };
 
-const vscode = acquireVsCodeApi();
+const vscode = typeof acquireVsCodeApi === "function"
+  ? acquireVsCodeApi()
+  : {
+      postMessage(message: unknown) {
+        console.log("[ModuleFlow preview postMessage]", message);
+      }
+    };
+
+const moduleFlowHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "#c586c0" },
+  { tag: [tags.name, tags.variableName], color: "#9cdcfe" },
+  { tag: [tags.function(tags.variableName), tags.definition(tags.variableName)], color: "#dcdcaa" },
+  { tag: [tags.string, tags.special(tags.string)], color: "#ce9178" },
+  { tag: [tags.number, tags.bool, tags.null], color: "#b5cea8" },
+  { tag: tags.comment, color: "#6a9955", fontStyle: "italic" },
+  { tag: tags.operator, color: "#d4d4d4" },
+  { tag: tags.punctuation, color: "#d4d4d4" }
+]);
 
 type FlowNodeData = {
   node: ModuleFlowNode;
@@ -47,6 +73,18 @@ function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { va
 
 function hasParams(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { params: { name: string }[]; inputMappings: Record<string, string> }> {
   return "params" in node && "inputMappings" in node;
+}
+
+function outputNamesForNode(node: ModuleFlowNode): string[] {
+  if (hasVariable(node)) {
+    return [node.variableName];
+  }
+
+  if (node.kind === "code") {
+    return codeOutputs(node.code);
+  }
+
+  return [];
 }
 
 function nodePosition(node: ModuleFlowNode, index: number) {
@@ -84,11 +122,10 @@ function mergeFlowNodes(
 
   return model.nodes.map((node, index) => {
     const current = currentById.get(node.id);
-    const canReuseCurrentPosition = current && !node.position;
     return {
       id: node.id,
       type: "moduleFlow",
-      position: canReuseCurrentPosition ? current.position : nodePosition(node, index),
+      position: current?.position ?? nodePosition(node, index),
       selected: current?.selected,
       data: { node, model, sources: outputSources(model, node), onModelChange }
     };
@@ -101,11 +138,9 @@ function canUseSource(model: ModuleFlowModel, sourceNode: ModuleFlowNode, target
     return ownerByNodeId.get(targetNode.id) === sourceNode.id;
   }
 
-  if (!hasVariable(sourceNode)) {
-    return false;
-  }
-
-  return previousScopedSources(model.nodes, model.controlFlow, targetNode.id).includes(sourceNode.variableName);
+  return outputNamesForNode(sourceNode).some((source) =>
+    previousScopedSources(model.nodes, model.controlFlow, targetNode.id).includes(source)
+  );
 }
 
 function sourceNodeIdFor(model: ModuleFlowModel, source: string, targetNode: ModuleFlowNode): string | undefined {
@@ -114,7 +149,7 @@ function sourceNodeIdFor(model: ModuleFlowModel, source: string, targetNode: Mod
     return flows.find((flow) => flow.nodes.some((node) => node.id === targetNode.id))?.input.id;
   }
 
-  return model.nodes.find((node) => hasVariable(node) && node.variableName === source && canUseSource(model, node, targetNode))?.id;
+  return model.nodes.find((node) => outputNamesForNode(node).includes(source) && canUseSource(model, node, targetNode))?.id;
 }
 
 function toFlowEdges(model: ModuleFlowModel): Edge[] {
@@ -148,7 +183,7 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
       edges.push({
         id: `data:${sourceNodeId}:${source}->${node.id}:${paramName}`,
         source: sourceNodeId,
-        sourceHandle: model.nodes.find((item) => item.id === sourceNodeId)?.kind === "input" ? "input" : "result",
+        sourceHandle: sourceHandleFor(model, sourceNodeId, source),
         target: node.id,
         targetHandle: paramName,
         style: {
@@ -174,7 +209,7 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
       edges.push({
         id: `data:${sourceNodeId}:${returnNode.source}->${returnNode.id}`,
         source: sourceNodeId,
-        sourceHandle: model.nodes.find((item) => item.id === sourceNodeId)?.kind === "input" ? "input" : "result",
+        sourceHandle: sourceHandleFor(model, sourceNodeId, returnNode.source),
         target: returnNode.id,
         targetHandle: "in",
         style: {
@@ -199,6 +234,19 @@ function outputSources(model: ModuleFlowModel, targetNode?: ModuleFlowNode): str
   }
 
   return previousScopedSources(model.nodes, model.controlFlow, targetNode.id);
+}
+
+function sourceHandleFor(model: ModuleFlowModel, sourceNodeId: string, source: string): string {
+  const sourceNode = model.nodes.find((item) => item.id === sourceNodeId);
+  if (sourceNode?.kind === "input") {
+    return "input";
+  }
+
+  if (sourceNode?.kind === "code") {
+    return `output:${source}`;
+  }
+
+  return "result";
 }
 
 function cloneModel(model: ModuleFlowModel): ModuleFlowModel {
@@ -227,6 +275,85 @@ function createsControlCycle(controlFlow: { from: string; to: string }[], from: 
 
 function uniqueOptions(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function flowNodeSize(node: Node<FlowNodeData>): { width: number; height: number } {
+  return {
+    width: node.measured?.width ?? node.width ?? 298,
+    height: node.measured?.height ?? node.height ?? 220
+  };
+}
+
+function FlowScopeOverlays({
+  model,
+  nodes
+}: {
+  model: ModuleFlowModel;
+  nodes: Node<FlowNodeData>[];
+}) {
+  const viewport = useViewport();
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const scopes = useMemo(() => {
+    return discoverFlows(model.nodes, model.controlFlow).flows.flatMap((flow) => {
+      const renderedNodes = flow.nodes
+        .map((node) => nodeById.get(node.id))
+        .filter((node): node is Node<FlowNodeData> => Boolean(node));
+
+      if (renderedNodes.length < 2) {
+        return [];
+      }
+
+      const bounds = renderedNodes.reduce(
+        (current, node) => {
+          const size = flowNodeSize(node);
+          return {
+            minX: Math.min(current.minX, node.position.x),
+            minY: Math.min(current.minY, node.position.y),
+            maxX: Math.max(current.maxX, node.position.x + size.width),
+            maxY: Math.max(current.maxY, node.position.y + size.height)
+          };
+        },
+        {
+          minX: Number.POSITIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY
+        }
+      );
+      const padding = 28;
+
+      return [
+        {
+          id: flow.input.id,
+          label: flow.input.functionName,
+          complete: flow.complete,
+          x: (bounds.minX - padding) * viewport.zoom + viewport.x,
+          y: (bounds.minY - padding) * viewport.zoom + viewport.y,
+          width: (bounds.maxX - bounds.minX + padding * 2) * viewport.zoom,
+          height: (bounds.maxY - bounds.minY + padding * 2) * viewport.zoom
+        }
+      ];
+    });
+  }, [model.controlFlow, model.nodes, nodeById, viewport.x, viewport.y, viewport.zoom]);
+
+  return (
+    <div className="scope-overlay-layer">
+      {scopes.map((scope) => (
+        <div
+          className={`scope-overlay ${scope.complete ? "complete" : "incomplete"}`}
+          key={scope.id}
+          style={{
+            left: scope.x,
+            top: scope.y,
+            width: scope.width,
+            height: scope.height
+          }}
+        >
+          <div className="scope-label">{scope.label}</div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function isEditableElement(target: EventTarget | null): boolean {
@@ -259,6 +386,115 @@ function SourceSelect({
   );
 }
 
+function CodeEditor({
+  value,
+  onChange,
+  onCommit
+}: {
+  value: string;
+  onChange: (code: string) => void;
+  onCommit: (code: string) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const latestValueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
+  const onCommitRef = useRef(onCommit);
+  const commitTimerRef = useRef<number | undefined>();
+
+  useEffect(() => {
+    latestValueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onCommitRef.current = onCommit;
+  }, [onChange, onCommit]);
+
+  useEffect(() => {
+    if (!hostRef.current) {
+      return;
+    }
+
+    const view = new EditorView({
+      parent: hostRef.current,
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          highlightSpecialChars(),
+          history(),
+          javascript(),
+          syntaxHighlighting(moduleFlowHighlightStyle),
+          drawSelection(),
+          EditorView.lineWrapping,
+          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged) {
+              return;
+            }
+
+            const nextValue = update.state.doc.toString();
+            latestValueRef.current = nextValue;
+            onChangeRef.current(nextValue);
+
+            if (commitTimerRef.current) {
+              window.clearTimeout(commitTimerRef.current);
+            }
+            commitTimerRef.current = window.setTimeout(() => onCommitRef.current(latestValueRef.current), 400);
+          }),
+          EditorView.theme({
+            "&": {
+              backgroundColor: "transparent"
+            }
+          })
+        ]
+      })
+    });
+
+    viewRef.current = view;
+    return () => {
+      if (commitTimerRef.current) {
+        window.clearTimeout(commitTimerRef.current);
+        onCommitRef.current(latestValueRef.current);
+      }
+      view.destroy();
+      viewRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    const currentValue = view.state.doc.toString();
+    if (value !== currentValue) {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: currentValue.length,
+          insert: value
+        }
+      });
+    }
+  }, [value]);
+
+  return (
+    <div
+      className="code-editor nodrag nopan"
+      ref={hostRef}
+      onBlur={() => onCommitRef.current(latestValueRef.current)}
+      onClickCapture={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDownCapture={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDownCapture={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    />
+  );
+}
+
 function nodeTitle(node: ModuleFlowNode): string {
   if (node.kind === "input") {
     return node.functionName;
@@ -270,6 +506,10 @@ function nodeTitle(node: ModuleFlowNode): string {
 
   if (node.kind === "return") {
     return "return";
+  }
+
+  if (node.kind === "code") {
+    return "code";
   }
 
   return "";
@@ -296,11 +536,25 @@ function nodeDetail(node: ModuleFlowNode): string {
     return "input";
   }
 
+  if (node.kind === "code") {
+    return "flow-only statement";
+  }
+
   return "";
 }
 
 const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const { model, node: selectedNode, onModelChange, sources } = data;
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    if (selectedNode.kind !== "code") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedNode.id, selectedNode.kind, selectedNode.kind === "code" ? selectedNode.code : undefined, updateNodeInternals]);
 
   const renameOutput = (nextName: string) => {
     if (!hasVariable(selectedNode) || !nextName || nextName === selectedNode.variableName) {
@@ -413,15 +667,41 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     });
   };
 
+  const updateCodeLocal = (code: string) => {
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "code") {
+        node.code = code;
+        onModelChange(nextModel);
+        window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
+      }
+    }
+  };
+
+  const commitCode = (code: string) => {
+    vscode.postMessage({
+      type: "updateCode",
+      nodeId: selectedNode.id,
+      code
+    });
+  };
+
   const inputRows = hasParams(selectedNode)
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
       : selectedNode.kind === "return"
         ? [{ id: "in", label: "value" }]
         : [];
-  const hasDataOutput = selectedNode.kind === "input" || hasVariable(selectedNode);
+  const outputRows = selectedNode.kind === "input"
+    ? [{ id: "input", label: "return" }]
+    : hasVariable(selectedNode)
+      ? [{ id: "result", label: "return" }]
+      : selectedNode.kind === "code"
+        ? codeOutputs(selectedNode.code).map((name) => ({ id: `output:${name}`, label: name }))
+        : [];
 
   return (
-    <div className="node-card">
+    <div className={`node-card node-card-${selectedNode.kind}`}>
       {!hasVariable(selectedNode) && selectedNode.kind !== "input" && <div className="node-title-label">{selectedNode.kind}</div>}
       {hasVariable(selectedNode) ? (
         <input
@@ -440,6 +720,14 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       )}
       <div className="node-detail">{nodeDetail(selectedNode)}</div>
       {selectedNode.warning && <div className="node-warning">{selectedNode.warning}</div>}
+
+      {selectedNode.kind === "code" && (
+        <CodeEditor
+          value={selectedNode.code}
+          onChange={updateCodeLocal}
+          onCommit={commitCode}
+        />
+      )}
 
       <details className="node-properties nodrag">
         <summary>Properties</summary>
@@ -495,7 +783,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         )}
       </details>
 
-      {(inputRows.length > 0 || hasDataOutput) && (
+      {(inputRows.length > 0 || outputRows.length > 0) && (
         <div className="node-section io-section">
           <div className="io-inputs">
             {inputRows.length > 0 && (
@@ -510,14 +798,14 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
               </>
             )}
           </div>
-          <div className="output-row">
-            {hasDataOutput && <span>return</span>}
-            {selectedNode.kind === "input" && (
-              <Handle id="input" type="source" position={Position.Right} className="output-handle" />
-            )}
-            {hasVariable(selectedNode) && (
-              <Handle id="result" type="source" position={Position.Right} className="output-handle" />
-            )}
+          <div className="io-outputs">
+            {outputRows.length > 0 && selectedNode.kind === "code" && <div className="section-label">Outputs</div>}
+            {outputRows.map((output) => (
+              <div className="output-row" key={output.id}>
+                <span>{output.label}</span>
+                <Handle id={output.id} type="source" position={Position.Right} className="output-handle" />
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -581,6 +869,7 @@ function Toolbox({
       <h2>Tools</h2>
       <button className="action-button primary" onClick={() => vscode.postMessage({ type: "importTools" })}>Import tools</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addFunction" })}>+ Function</button>
+      <button className="action-button" onClick={() => vscode.postMessage({ type: "addCodeNode" })}>+ Code</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "refresh" })}>Refresh files</button>
       {model.imports.map((toolModule) => (
         <details key={toolModule.modulePath} open>
@@ -731,9 +1020,14 @@ function App() {
           : `input.${connection.targetHandle}`
         : hasVariable(sourceNode)
           ? sourceNode.variableName
-          : undefined;
+          : sourceNode.kind === "code" && connection.sourceHandle?.startsWith("output:")
+            ? connection.sourceHandle.slice("output:".length)
+            : undefined;
 
       if (!source) {
+        return;
+      }
+      if (!source.startsWith("input") && !previousScopedSources(model.nodes, model.controlFlow, targetNode.id).includes(source)) {
         return;
       }
 
@@ -864,6 +1158,7 @@ function App() {
           onDragOver={onDragOver}
           onDrop={onDrop}
         >
+          <FlowScopeOverlays model={model} nodes={nodes} />
           <Background />
           <Controls />
           <MiniMap pannable zoomable />
@@ -1015,7 +1310,95 @@ style.textContent = `
     --moduleflow-cardFooter: color-mix(in srgb, var(--vscode-sideBar-background) 72%, var(--vscode-editor-background) 28%);
     --moduleflow-dataEdge: #4aa3ff;
     --moduleflow-flowEdge: #d7a846;
+    --moduleflow-inputAccent: #58c77a;
+    --moduleflow-inputFill: rgba(88, 199, 122, 0.08);
+    --moduleflow-returnAccent: #e05f5f;
+    --moduleflow-returnFill: rgba(224, 95, 95, 0.08);
+    --moduleflow-scopeFill: rgba(215, 168, 70, 0.055);
+    --moduleflow-scopeBorder: rgba(215, 168, 70, 0.42);
     --moduleflow-footerPortInset: 16px;
+  }
+
+  .scope-overlay-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  .scope-overlay {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px solid var(--moduleflow-scopeBorder);
+    border-radius: 12px;
+    background: var(--moduleflow-scopeFill);
+    box-shadow: inset 0 0 0 1px rgba(215, 168, 70, 0.08);
+  }
+
+  .scope-overlay.incomplete {
+    border-style: dashed;
+    opacity: 0.72;
+  }
+
+  .scope-label {
+    position: absolute;
+    top: -11px;
+    left: 14px;
+    padding: 2px 7px;
+    color: var(--moduleflow-flowEdge);
+    background: var(--vscode-editor-background);
+    border: 1px solid rgba(215, 168, 70, 0.30);
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+  }
+
+  .react-flow__controls {
+    overflow: hidden;
+    background: var(--moduleflow-cardBackground);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  }
+
+  .react-flow__controls-button {
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    color: var(--vscode-descriptionForeground);
+    background: var(--moduleflow-cardBackground);
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
+
+  .react-flow__controls-button:hover {
+    color: var(--vscode-foreground);
+    background: color-mix(in srgb, var(--moduleflow-cardBackground) 78%, var(--vscode-focusBorder) 22%);
+  }
+
+  .react-flow__controls-button svg {
+    max-width: 13px;
+    max-height: 13px;
+  }
+
+  .react-flow__minimap {
+    overflow: hidden;
+    background: color-mix(in srgb, var(--moduleflow-cardBackground) 82%, var(--vscode-editor-background) 18%);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  }
+
+  .react-flow__minimap-mask {
+    fill: rgba(215, 168, 70, 0.10);
+    stroke: var(--moduleflow-flowEdge);
+    stroke-width: 1.5;
+  }
+
+  .react-flow__minimap-node {
+    fill: color-mix(in srgb, var(--vscode-descriptionForeground) 52%, var(--moduleflow-cardBackground) 48%);
+    stroke: transparent;
   }
 
   .node-card {
@@ -1026,6 +1409,40 @@ style.textContent = `
     background: var(--moduleflow-cardBackground);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.20);
     overflow: hidden;
+  }
+
+  .node-card-input {
+    border-color: color-mix(in srgb, var(--moduleflow-inputAccent) 68%, var(--moduleflow-cardBorder) 32%);
+    background:
+      linear-gradient(180deg, var(--moduleflow-inputFill), transparent 42%),
+      var(--moduleflow-cardBackground);
+  }
+
+  .node-card-return {
+    border-color: color-mix(in srgb, var(--moduleflow-returnAccent) 68%, var(--moduleflow-cardBorder) 32%);
+    background:
+      linear-gradient(180deg, var(--moduleflow-returnFill), transparent 42%),
+      var(--moduleflow-cardBackground);
+  }
+
+  .node-card-input .node-title,
+  .node-card-input .node-title-input,
+  .node-card-input .section-label {
+    color: var(--moduleflow-inputAccent);
+  }
+
+  .node-card-return .node-title,
+  .node-card-return .section-label {
+    color: var(--moduleflow-returnAccent);
+  }
+
+  .node-card-input .input-handle,
+  .node-card-input .output-handle {
+    background: var(--moduleflow-inputAccent);
+  }
+
+  .node-card-return .input-handle {
+    background: var(--moduleflow-returnAccent);
   }
 
   .react-flow__node.selected .node-card {
@@ -1110,6 +1527,77 @@ style.textContent = `
     line-height: 1.35;
   }
 
+  .code-editor {
+    min-height: 118px;
+    margin-top: 12px;
+    color: var(--vscode-editor-foreground, var(--vscode-foreground));
+    background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--moduleflow-cardBackground) 18%);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 5px;
+    cursor: text;
+    overflow: hidden;
+  }
+
+  .code-editor:focus-within {
+    border-color: var(--vscode-focusBorder);
+  }
+
+  .code-editor .cm-editor {
+    min-height: 118px;
+    color: var(--vscode-editor-foreground, var(--vscode-foreground));
+    background: transparent;
+    caret-color: var(--vscode-editorCursor-foreground, #aeafad);
+    font-family: var(--vscode-editor-font-family, Consolas, monospace);
+    font-size: 12px;
+    line-height: 1.45;
+    cursor: text;
+  }
+
+  .code-editor .cm-scroller {
+    cursor: text;
+    font-family: inherit;
+  }
+
+  .code-editor .cm-content {
+    min-height: 118px;
+    padding: 9px 10px;
+    caret-color: var(--vscode-editorCursor-foreground, #aeafad);
+    cursor: text;
+  }
+
+  .code-editor .cm-cursor,
+  .code-editor .cm-dropCursor {
+    border-left-color: var(--vscode-editorCursor-foreground, #aeafad);
+    border-left-width: 2px;
+  }
+
+  .code-editor .cm-cursor {
+    animation: moduleflow-caret-blink 1.06s steps(1) infinite;
+  }
+
+  @keyframes moduleflow-caret-blink {
+    0%, 49% {
+      opacity: 1;
+    }
+    50%, 100% {
+      opacity: 0;
+    }
+  }
+
+  .code-editor .cm-selectionBackground,
+  .code-editor .cm-content ::selection {
+    background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.72));
+  }
+
+  .code-editor .cm-line {
+    cursor: text;
+    padding: 0;
+  }
+
+  .code-editor .cm-focused {
+    outline: none;
+  }
+
   .inline-control {
     display: block;
     margin-top: 10px;
@@ -1175,6 +1663,10 @@ style.textContent = `
     min-width: 0;
   }
 
+  .io-outputs {
+    min-width: 0;
+  }
+
   .output-row {
     position: relative;
     min-height: 18px;
@@ -1187,6 +1679,10 @@ style.textContent = `
     text-align: right;
     text-transform: none;
     letter-spacing: 0;
+  }
+
+  .output-row + .output-row {
+    margin-top: 7px;
   }
 
   .flow-section {

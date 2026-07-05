@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { discoverFlows } from "../graph/flowDiscovery";
 import { ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
-import { readText, writeText } from "./loadModel";
+import { moduleFlowModulePath, readText, writeText } from "./loadModel";
 
 function toVariableName(raw: string): string {
   const base = raw.replace(/^[A-Z]/, (letter) => letter.toLowerCase()).replace(/[^\w$]/g, "");
@@ -203,6 +203,12 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
     return;
   }
 
+  if (message.modulePath === moduleFlowModulePath) {
+    void vscode.window.showWarningMessage(
+      `ModuleFlow added ${toolExport.name}(). Recursive calls are allowed, but make sure the function has a terminating condition.`
+    );
+  }
+
   if (message.methodName) {
     const method = toolExport.methods.find((item) => item.name === message.methodName);
     const instanceNode = model.nodes.find(
@@ -297,6 +303,17 @@ export async function addFunction(targetUri: vscode.Uri, model: ModuleFlowModel,
   await persistModel(targetUri, model);
 }
 
+export async function addCodeNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
+  model.nodes.push({
+    id: `code-${Date.now()}`,
+    kind: "code",
+    label: "code",
+    code: "// write code here",
+    position: message.position
+  });
+  await persistModel(targetUri, model);
+}
+
 export async function mapInput(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; paramName: string; source: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
   if (!node || !("inputMappings" in node)) {
@@ -325,6 +342,16 @@ export async function updateDescription(targetUri: vscode.Uri, model: ModuleFlow
 
   const description = message.description.trim();
   node.description = description || undefined;
+  await persistModel(targetUri, model);
+}
+
+export async function updateCode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; code: string }): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind !== "code") {
+    return;
+  }
+
+  node.code = message.code;
   await persistModel(targetUri, model);
 }
 

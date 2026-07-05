@@ -212,6 +212,20 @@ export function stripModuleFlowRegion(source: string): string {
   return source.replace(/\/\/\s*@moduleflow:start[\s\S]*?\/\/\s*@moduleflow:end/g, "");
 }
 
+function moduleFlowRegion(source: string): string | undefined {
+  const match = /\/\/\s*@moduleflow:start([\s\S]*?)\/\/\s*@moduleflow:end/.exec(source);
+  return match?.[1];
+}
+
+export function parseModuleFlowFunctions(source: string): ModuleExport[] {
+  const region = moduleFlowRegion(source);
+  if (!region) {
+    return [];
+  }
+
+  return parseExports(region).filter((item) => item.kind === "function");
+}
+
 export function parseLocalFunctions(source: string): ModuleExport[] {
   const withoutRegion = stripModuleFlowRegion(source);
   const ast = tryParseModule(withoutRegion);

@@ -65,6 +65,15 @@ export type ModuleFlowNode =
     }
   | {
       id: string;
+      kind: "code";
+      label: string;
+      code: string;
+      position?: NodePosition;
+      description?: string;
+      warning?: string;
+    }
+  | {
+      id: string;
       kind: "call";
       label: string;
       modulePath: string;

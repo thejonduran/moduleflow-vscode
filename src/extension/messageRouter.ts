@@ -4,6 +4,7 @@ import { importTools, loadModelFromFile } from "../model/loadModel";
 import {
   addNode,
   addFunction,
+  addCodeNode,
   deleteEdge,
   deleteNode,
   mapInput,
@@ -13,6 +14,7 @@ import {
   setReturnSource,
   updateDescription,
   updateControlFlow,
+  updateCode,
   updatePosition
 } from "../model/mutations";
 import { ModuleFlowModel } from "../types";
@@ -91,6 +93,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
+    if (message?.type === "addCodeNode") {
+      const current = currentModel(context);
+      await addCodeNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
+      return;
+    }
+
     if (message?.type === "mapInput") {
       const current = currentModel(context);
       await mapInput(context.targetUri, current, message as never);
@@ -123,6 +133,13 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "updateDescription") {
       const current = currentModel(context);
       await updateDescription(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updateCode") {
+      const current = currentModel(context);
+      await updateCode(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       return;
     }

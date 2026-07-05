@@ -16,6 +16,7 @@ type Metadata = {
     height: number;
   };
   description?: string;
+  code?: string;
 };
 
 export function createInitialModel(targetFile: string): ModuleFlowModel {
@@ -116,6 +117,18 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
     };
   }
 
+  const codeMatch = /^@moduleflow:code\s+(\S+)\s+(.+)$/.exec(value);
+  if (codeMatch) {
+    const [, nodeId, encodedCode] = codeMatch;
+    return {
+      nodeId,
+      metadata: {
+        nodeId,
+        code: parseDescription(encodedCode)
+      }
+    };
+  }
+
   return undefined;
 }
 
@@ -194,6 +207,19 @@ function unwrapAwait(expression: t.Expression): { expression: t.Expression; asyn
 
 function identifierName(node: t.Node | null | undefined): string | undefined {
   return t.isIdentifier(node) ? node.name : undefined;
+}
+
+function statementCountForCode(code: string): number {
+  try {
+    const ast = parse(code, {
+      sourceType: "module",
+      plugins: ["jsx"],
+      attachComment: true
+    });
+    return Math.max(1, ast.program.body.length);
+  } catch {
+    return 1;
+  }
 }
 
 function findModuleFlowFunctions(source: string): t.FunctionDeclaration[] {
@@ -282,7 +308,8 @@ export function createModelFromSource(targetFile: string, source: string, import
     let returnMetadata: Metadata = {};
     let nodeIndex = 1;
 
-    for (const statement of functionNode.body.body) {
+    for (let statementIndex = 0; statementIndex < functionNode.body.body.length; statementIndex += 1) {
+      const statement = functionNode.body.body[statementIndex];
       const metadata = readMetadataFromComments(statementComments(statement), inputId);
       if (metadata.input) {
         Object.assign(inputNode, metadata.input);
@@ -296,6 +323,21 @@ export function createModelFromSource(targetFile: string, source: string, import
         if (returnMetadata.nodeId) {
           returnId = returnMetadata.nodeId;
         }
+        continue;
+      }
+
+      if (metadata.current?.code) {
+        const nodeId = metadata.current.nodeId ?? `${functionName}-node-${nodeIndex++}`;
+        parsedNodes.push({
+          id: nodeId,
+          kind: "code",
+          label: "code",
+          code: metadata.current.code,
+          position: metadata.current.position,
+          description: metadata.current.description
+        });
+        statementNodeIds.push(nodeId);
+        statementIndex += statementCountForCode(metadata.current.code) - 1;
         continue;
       }
 

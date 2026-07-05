@@ -21,8 +21,14 @@ function descriptionCommentFor(node: ModuleFlowNode): string | undefined {
     : undefined;
 }
 
+function codeCommentFor(node: ModuleFlowNode): string | undefined {
+  return node.kind === "code"
+    ? `  // @moduleflow:code ${node.id} ${JSON.stringify(node.code)}`
+    : undefined;
+}
+
 function metadataCommentsFor(node: ModuleFlowNode): string {
-  return [positionCommentFor(node), descriptionCommentFor(node)].filter(Boolean).join("\n");
+  return [positionCommentFor(node), descriptionCommentFor(node), codeCommentFor(node)].filter(Boolean).join("\n");
 }
 
 function argsFor(
@@ -35,6 +41,14 @@ function argsFor(
 function statementFor(node: ModuleFlowNode): string | undefined {
   const metadataComments = metadataCommentsFor(node);
   const prefix = metadataComments ? `${metadataComments}\n` : "";
+
+  if (node.kind === "code") {
+    const indentedCode = node.code
+      .split(/\r?\n/)
+      .map((line) => line.trim() ? `  ${line}` : "")
+      .join("\n");
+    return `${prefix}${indentedCode}`;
+  }
 
   if (node.kind === "classInstance") {
     return `${prefix}  const ${node.variableName} = new ${node.callName ?? node.exportName}(${argsFor(node.params, node.inputMappings)});`;

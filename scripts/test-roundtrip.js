@@ -1,6 +1,9 @@
 const assert = require("node:assert/strict");
 const { buildRegion } = require("../out/codegen/generateRegion");
 const { createModelFromSource } = require("../out/graph/jsToGraph");
+const { parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
+const { codeOutputs } = require("../out/graph/codeOutputs");
+const { previousScopedSources } = require("../out/graph/flowDiscovery");
 
 const imports = [
   {
@@ -98,6 +101,14 @@ const nodes = [
     description: "Extract final user"
   },
   {
+    id: "code-1",
+    kind: "code",
+    label: "code",
+    code: "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);",
+    position: { x: 640, y: 260 },
+    description: "Side effect block"
+  },
+  {
     id: "return",
     kind: "return",
     label: "return",
@@ -110,9 +121,9 @@ const nodes = [
 const source = buildRegion("main", nodes);
 const model = createModelFromSource("main.js", source, imports);
 
-assert.equal(model.nodes.length, 5);
+assert.equal(model.nodes.length, 6);
 
-const [input, client, method, call, returnNode] = model.nodes;
+const [input, client, method, call, codeNode, returnNode] = model.nodes;
 assert.deepEqual(input.position, { x: 12, y: 34 });
 assert.equal(input.description, "Raw workflow input");
 
@@ -136,6 +147,12 @@ assert.deepEqual(call.inputMappings, { result: "result" });
 assert.deepEqual(call.position, { x: 520, y: 140 });
 assert.equal(call.description, "Extract final user");
 
+assert.equal(codeNode.kind, "code");
+assert.equal(codeNode.code, "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);");
+assert.deepEqual(codeNode.position, { x: 640, y: 260 });
+assert.equal(codeNode.description, "Side effect block");
+assert.deepEqual(codeOutputs("const alpha = 1;\nlet beta = alpha;\nvar gamma;"), ["alpha", "beta", "gamma"]);
+
 assert.equal(returnNode.kind, "return");
 assert.equal(returnNode.source, "user");
 assert.deepEqual(returnNode.position, { x: 760, y: 140 });
@@ -144,8 +161,10 @@ assert.deepEqual(model.controlFlow, [
   { from: "input", to: "client-1" },
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
-  { from: "call-1", to: "return" }
+  { from: "call-1", to: "code-1" },
+  { from: "code-1", to: "return" }
 ]);
+assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "return"), ["client", "result", "user", "auditedUser"]);
 
 const reorderedSource = buildRegion("main", nodes, [
   { from: "input", to: "call-1" },
@@ -214,7 +233,8 @@ const multiFunctionSource = buildRegion("main", multiFunctionNodes, [
   { from: "input", to: "client-1" },
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
-  { from: "call-1", to: "return" },
+  { from: "call-1", to: "code-1" },
+  { from: "code-1", to: "return" },
   { from: "lookup-input", to: "lookup-call" },
   { from: "lookup-call", to: "lookup-return" }
 ]);
@@ -229,6 +249,9 @@ assert.deepEqual(
     { from: "lookup-call", to: "lookup-return" }
   ]
 );
+const moduleFlowTools = parseModuleFlowFunctions(multiFunctionSource);
+assert.deepEqual(moduleFlowTools.map((item) => item.name), ["main", "lookupUser"]);
+assert.deepEqual(moduleFlowTools.map((item) => item.params.map((param) => param.name)), [["input"], ["input"]]);
 
 const formattedSource = `
 // @moduleflow:start
