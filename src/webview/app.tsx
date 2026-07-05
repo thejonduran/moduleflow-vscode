@@ -287,10 +287,12 @@ function flowNodeSize(node: Node<FlowNodeData>): { width: number; height: number
 
 function FlowScopeOverlays({
   model,
-  nodes
+  nodes,
+  onScopeSelect
 }: {
   model: ModuleFlowModel;
   nodes: Node<FlowNodeData>[];
+  onScopeSelect: (inputId: string, additive: boolean) => void;
 }) {
   const viewport = useViewport();
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
@@ -338,22 +340,63 @@ function FlowScopeOverlays({
   }, [model.controlFlow, model.nodes, nodeById, viewport.x, viewport.y, viewport.zoom]);
 
   return (
-    <div className="scope-overlay-layer">
-      {scopes.map((scope) => (
-        <div
-          className={`scope-overlay ${scope.complete ? "complete" : "incomplete"}`}
-          key={scope.id}
-          style={{
-            left: scope.x,
-            top: scope.y,
-            width: scope.width,
-            height: scope.height
-          }}
-        >
-          <div className="scope-label">{scope.label}</div>
-        </div>
-      ))}
-    </div>
+    <>
+      <div className="scope-overlay-layer">
+        {scopes.map((scope) => (
+          <div
+            className={`scope-overlay ${scope.complete ? "complete" : "incomplete"}`}
+            key={scope.id}
+            style={{
+              left: scope.x,
+              top: scope.y,
+              width: scope.width,
+              height: scope.height
+            }}
+          />
+        ))}
+      </div>
+      <div className="scope-interaction-layer">
+        {scopes.map((scope) => (
+          <div
+            className="scope-interaction-box"
+            key={scope.id}
+            style={{
+              left: scope.x,
+              top: scope.y,
+              width: scope.width,
+              height: scope.height
+            }}
+          >
+            <button
+              className="scope-label"
+              type="button"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onScopeSelect(scope.id, event.shiftKey);
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {scope.label}
+            </button>
+            {["top", "right", "bottom", "left"].map((side) => (
+              <button
+                aria-label={`Select ${scope.label} flow`}
+                className={`scope-select-zone ${side}`}
+                key={side}
+                type="button"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onScopeSelect(scope.id, event.shiftKey);
+                }}
+                onClick={(event) => event.stopPropagation()}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -1072,6 +1115,26 @@ function App() {
     setSelectedEdge(selectedEdges[0]);
   }, []);
 
+  const onScopeSelect = useCallback((inputId: string, additive: boolean) => {
+    const flow = discoverFlows(model.nodes, model.controlFlow).flows.find((item) => item.input.id === inputId);
+    if (!flow) {
+      return;
+    }
+
+    const selectedIds = new Set(flow.nodes.map((node) => node.id));
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => ({
+        ...node,
+        selected: additive ? Boolean(node.selected || selectedIds.has(node.id)) : selectedIds.has(node.id)
+      }))
+    );
+    setEdges((currentEdges) => currentEdges.map((edge) => ({ ...edge, selected: false })));
+    setSelectedNodeIds((currentIds) =>
+      additive ? Array.from(new Set([...currentIds, ...selectedIds])) : Array.from(selectedIds)
+    );
+    setSelectedEdge(undefined);
+  }, [model.controlFlow, model.nodes, setEdges, setNodes]);
+
   const onNodesDelete = useCallback((deletedNodes: Node[]) => {
     for (const node of deletedNodes) {
       vscode.postMessage({
@@ -1162,8 +1225,8 @@ function App() {
           onDragOver={onDragOver}
           onDrop={onDrop}
         >
-          <FlowScopeOverlays model={model} nodes={nodes} />
           <Background />
+          <FlowScopeOverlays model={model} nodes={nodes} onScopeSelect={onScopeSelect} />
           <Controls />
           <MiniMap pannable zoomable />
         </ReactFlow>
@@ -1330,6 +1393,17 @@ style.textContent = `
     pointer-events: none;
   }
 
+  .scope-interaction-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    overflow: visible;
+    z-index: 6;
+    pointer-events: auto;
+  }
+
   .scope-overlay {
     position: absolute;
     box-sizing: border-box;
@@ -1337,6 +1411,16 @@ style.textContent = `
     border-radius: 12px;
     background: var(--moduleflow-scopeFill);
     box-shadow: inset 0 0 0 1px rgba(215, 168, 70, 0.08);
+    pointer-events: none;
+  }
+
+  .scope-interaction-box {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .react-flow__nodes {
+    z-index: 3;
   }
 
   .scope-overlay.incomplete {
@@ -1348,15 +1432,64 @@ style.textContent = `
     position: absolute;
     top: -11px;
     left: 14px;
+    z-index: 1;
+    width: auto;
     padding: 2px 7px;
     color: var(--moduleflow-flowEdge);
     background: var(--vscode-editor-background);
     border: 1px solid rgba(215, 168, 70, 0.30);
     border-radius: 999px;
+    cursor: pointer;
     font-size: 10px;
     font-weight: 700;
     line-height: 1.3;
     letter-spacing: 0.04em;
+    pointer-events: auto;
+    text-align: center;
+  }
+
+  .scope-label:hover {
+    border-color: var(--moduleflow-flowEdge);
+  }
+
+  .scope-select-zone {
+    position: absolute;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .scope-select-zone.top,
+  .scope-select-zone.bottom {
+    left: 10px;
+    right: 10px;
+    height: 10px;
+  }
+
+  .scope-select-zone.top {
+    top: -5px;
+  }
+
+  .scope-select-zone.bottom {
+    bottom: -5px;
+  }
+
+  .scope-select-zone.left,
+  .scope-select-zone.right {
+    top: 10px;
+    bottom: 10px;
+    width: 10px;
+  }
+
+  .scope-select-zone.left {
+    left: -5px;
+  }
+
+  .scope-select-zone.right {
+    right: -5px;
   }
 
   .react-flow__controls {
