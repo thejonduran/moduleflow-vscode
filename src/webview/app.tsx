@@ -819,11 +819,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           <button
             className="action-button danger"
             onClick={() => {
-              const confirmed = window.confirm(`Delete function "${selectedNode.functionName}" and every node in its flow?`);
-              if (!confirmed) {
-                return;
-              }
-
               vscode.postMessage({
                 type: "deleteFunction",
                 inputNodeId: selectedNode.id

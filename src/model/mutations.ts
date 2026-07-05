@@ -479,6 +479,16 @@ export async function deleteFunction(targetUri: vscode.Uri, model: ModuleFlowMod
     return;
   }
 
+  const nodeCount = flow.nodes.length;
+  const confirmed = await vscode.window.showWarningMessage(
+    `Delete function "${flow.input.functionName}" and ${nodeCount} node${nodeCount === 1 ? "" : "s"} in its flow?`,
+    { modal: true },
+    "Delete function"
+  );
+  if (confirmed !== "Delete function") {
+    return;
+  }
+
   const deletedNodeIds = new Set(flow.nodes.map((node) => node.id));
   const sourcesToRemove = new Set(flow.nodes.flatMap(outputSourcesForNode));
 
