@@ -10,7 +10,8 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
     node.position ? `y:${Math.round(node.position.y)}` : undefined,
     node.kind === "input" ? "kind:input" : undefined,
     node.kind === "return" ? "kind:return" : undefined,
-    node.kind === "code" ? "kind:code" : undefined
+    node.kind === "code" ? "kind:code" : undefined,
+    node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined
   ].filter(Boolean);
 
   return metadataParts.length > 0
@@ -35,7 +36,13 @@ function argsFor(
   return params.map((param) => inputMappings[param.name] ?? param.defaultValue ?? `input.${param.name}`).join(", ");
 }
 
-function statementFor(node: ModuleFlowNode): string | undefined {
+function moduleFlowFunctionName(nodes: ModuleFlowNode[], inputNodeId: string): string | undefined {
+  return nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+    node.kind === "input" && node.id === inputNodeId
+  )?.functionName;
+}
+
+function statementFor(node: ModuleFlowNode, nodes: ModuleFlowNode[]): string | undefined {
   const metadataComments = metadataCommentsFor(node);
   const prefix = metadataComments ? `${metadataComments}\n` : "";
 
@@ -54,6 +61,14 @@ function statementFor(node: ModuleFlowNode): string | undefined {
   if (node.kind === "call") {
     const awaitPrefix = node.async ? "await " : "";
     return `${prefix}  const ${node.variableName} = ${awaitPrefix}${node.callName ?? node.exportName}(${argsFor(node.params, node.inputMappings)});`;
+  }
+
+  if (node.kind === "moduleFlowCall") {
+    const functionName = moduleFlowFunctionName(nodes, node.functionNodeId);
+    if (!functionName) {
+      return undefined;
+    }
+    return `${prefix}  const ${node.variableName} = await ${functionName}(${node.inputMappings.input ?? "input"});`;
   }
 
   if (node.kind === "methodCall") {
@@ -80,10 +95,10 @@ export function hasRegion(source: string): boolean {
   return start >= 0 && end > start;
 }
 
-function buildFunction(flow: ReturnType<typeof discoverFlows>["flows"][number]): string {
+function buildFunction(flow: ReturnType<typeof discoverFlows>["flows"][number], nodes: ModuleFlowNode[]): string {
   const bodyNodes = flow.nodes.slice(1, -1);
   const statements = bodyNodes
-    .map((node) => statementFor(node))
+    .map((node) => statementFor(node, nodes))
     .filter((line): line is string => Boolean(line));
   const inputMetadataComments = metadataCommentsFor(flow.input);
   const returnMetadataComments = flow.returnNode ? metadataCommentsFor(flow.returnNode) : "";
@@ -103,7 +118,7 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
   const flows = controlFlow
     ? discoverFlows(nodes, controlFlow).flows.filter((flow) => flow.complete)
     : [];
-  const functions = flows.map(buildFunction);
+  const functions = flows.map((flow) => buildFunction(flow, nodes));
 
   if (functions.length === 0 && nodes.length > 0 && !controlFlow) {
     const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
@@ -114,7 +129,7 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
       nodes,
       complete: true,
       errors: []
-    }));
+    }, nodes));
   }
 
   return [

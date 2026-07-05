@@ -67,6 +67,10 @@ type ToolDragPayload =
       modulePath: string;
       exportName: string;
       methodName: string | null;
+    }
+  | {
+      type: "addModuleFlowCall";
+      functionNodeId: string;
     };
 
 function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { variableName: string }> {
@@ -75,6 +79,20 @@ function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { va
 
 function hasParams(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { params: { name: string }[]; inputMappings: Record<string, string> }> {
   return "params" in node && "inputMappings" in node;
+}
+
+function hasInputMappings(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { inputMappings: Record<string, string> }> {
+  return "inputMappings" in node;
+}
+
+function moduleFlowFunctions(model: ModuleFlowModel): Array<Extract<ModuleFlowNode, { kind: "input" }>> {
+  return model.nodes.filter((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
+}
+
+function moduleFlowFunctionFor(model: ModuleFlowModel | undefined, functionNodeId: string): Extract<ModuleFlowNode, { kind: "input" }> | undefined {
+  return model?.nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+    node.kind === "input" && node.id === functionNodeId
+  );
 }
 
 function outputNamesForNode(node: ModuleFlowNode): string[] {
@@ -174,7 +192,7 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
     }
   }));
   for (const node of model.nodes) {
-    if (!hasParams(node)) {
+    if (!hasParams(node) && node.kind !== "moduleFlowCall") {
       continue;
     }
 
@@ -605,9 +623,13 @@ function nodeTitle(node: ModuleFlowNode): string {
   return "";
 }
 
-function nodeDetail(node: ModuleFlowNode): string {
+function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
   if (node.kind === "call") {
     return `${node.callName ?? node.exportName}(${node.params.map((param) => param.name).join(", ")})`;
+  }
+
+  if (node.kind === "moduleFlowCall") {
+    return `${moduleFlowFunctionFor(model, node.functionNodeId)?.functionName ?? "missingFunction"}(input)`;
   }
 
   if (node.kind === "classInstance") {
@@ -658,10 +680,10 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       const oldName = node.variableName;
       node.variableName = nextName;
       for (const candidate of nextModel.nodes) {
-        if (hasParams(candidate)) {
-          for (const param of candidate.params) {
-            if (candidate.inputMappings[param.name] === oldName) {
-              candidate.inputMappings[param.name] = nextName;
+        if (hasInputMappings(candidate)) {
+          for (const [inputName, source] of Object.entries(candidate.inputMappings)) {
+            if (source === oldName) {
+              candidate.inputMappings[inputName] = nextName;
             }
           }
         }
@@ -709,7 +731,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     if (model && onModelChange) {
       const nextModel = cloneModel(model);
       const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
-      if (node && hasParams(node)) {
+      if (node && hasInputMappings(node)) {
         node.inputMappings[paramName] = source;
         onModelChange(nextModel);
       }
@@ -720,6 +742,31 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       nodeId: selectedNode.id,
       paramName,
       source
+    });
+  };
+
+  const updateModuleFlowFunction = (functionNodeId: string) => {
+    if (selectedNode.kind !== "moduleFlowCall") {
+      return;
+    }
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      const inputNode = nextModel.nodes.find((item): item is Extract<ModuleFlowNode, { kind: "input" }> =>
+        item.kind === "input" && item.id === functionNodeId
+      );
+      if (node?.kind === "moduleFlowCall" && inputNode) {
+        node.functionNodeId = functionNodeId;
+        node.label = inputNode.functionName;
+        onModelChange(nextModel);
+      }
+    }
+
+    vscode.postMessage({
+      type: "setModuleFlowCallFunction",
+      nodeId: selectedNode.id,
+      functionNodeId
     });
   };
 
@@ -779,6 +826,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
   const inputRows = hasParams(selectedNode)
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
+      : selectedNode.kind === "moduleFlowCall"
+        ? [{ id: "input", label: "input" }]
       : selectedNode.kind === "return"
         ? [{ id: "in", label: "value" }]
         : selectedNode.kind === "code"
@@ -810,7 +859,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       ) : (
         <div className="node-title">{nodeTitle(selectedNode)}</div>
       )}
-      <div className="node-detail">{nodeDetail(selectedNode)}</div>
+      <div className="node-detail">{nodeDetail(selectedNode, model)}</div>
       {selectedNode.warning && <div className="node-warning">{selectedNode.warning}</div>}
 
       {selectedNode.kind === "code" && (
@@ -846,6 +895,33 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
                 />
               </label>
             ))}
+          </>
+        )}
+
+        {selectedNode.kind === "moduleFlowCall" && (
+          <>
+            <label>
+              Function
+              <select
+                value={selectedNode.functionNodeId}
+                onChange={(event) => updateModuleFlowFunction(event.currentTarget.value)}
+              >
+                {model && moduleFlowFunctions(model).map((inputNode) => (
+                  <option value={inputNode.id} key={inputNode.id}>
+                    {inputNode.functionName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <h3>Inputs</h3>
+            <label>
+              input
+              <SourceSelect
+                value={selectedNode.inputMappings.input ?? "input"}
+                options={["input", ...sources]}
+                onChange={(source) => updateInputSource("input", source)}
+              />
+            </label>
           </>
         )}
 
@@ -990,6 +1066,32 @@ function Toolbox({
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addFunction" })}>+ Function</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addCodeNode" })}>+ Code</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "refresh" })}>Refresh files</button>
+      {moduleFlowFunctions(model).length > 0 && (
+        <details open>
+          <summary>ModuleFlow</summary>
+          {moduleFlowFunctions(model).map((inputNode) => (
+            <button
+              className="tool-button"
+              draggable
+              key={inputNode.id}
+              onDragStart={(event) =>
+                startDrag(event, {
+                  type: "addModuleFlowCall",
+                  functionNodeId: inputNode.id
+                })
+              }
+              onClick={() =>
+                vscode.postMessage({
+                  type: "addModuleFlowCall",
+                  functionNodeId: inputNode.id
+                })
+              }
+            >
+              + {inputNode.functionName}(input)
+            </button>
+          ))}
+        </details>
+      )}
       {model.imports.map((toolModule) => (
         <details key={toolModule.modulePath} open>
           <summary>{toolModule.fileName}</summary>
@@ -1139,6 +1241,8 @@ function App() {
       const source = sourceNode.kind === "input"
         ? targetNode.kind === "return"
           ? "input"
+          : targetNode.kind === "moduleFlowCall" && connection.targetHandle === "input"
+            ? "input"
           : `input.${connection.targetHandle}`
         : hasVariable(sourceNode)
           ? sourceNode.variableName
@@ -1161,7 +1265,7 @@ function App() {
         }
       } else {
         const nextTargetNode = nextModel.nodes.find((node) => node.id === connection.target);
-        if (nextTargetNode && hasParams(nextTargetNode)) {
+        if (nextTargetNode && hasInputMappings(nextTargetNode)) {
           nextTargetNode.inputMappings[connection.targetHandle] = source;
         }
       }

@@ -109,8 +109,8 @@ function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { va
   return "variableName" in node;
 }
 
-function hasInputMappings(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { inputMappings: Record<string, string>; params: { name: string }[] }> {
-  return "inputMappings" in node && "params" in node;
+function hasInputMappings(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { inputMappings: Record<string, string> }> {
+  return "inputMappings" in node;
 }
 
 function sanitizeIdentifier(value: string): string | undefined {
@@ -125,9 +125,9 @@ function sanitizeIdentifier(value: string): string | undefined {
 function replaceSourceReferences(model: ModuleFlowModel, oldSource: string, newSource: string): void {
   for (const node of model.nodes) {
     if (hasInputMappings(node)) {
-      for (const param of node.params) {
-        if (node.inputMappings[param.name] === oldSource) {
-          node.inputMappings[param.name] = newSource;
+      for (const [inputName, source] of Object.entries(node.inputMappings)) {
+        if (source === oldSource) {
+          node.inputMappings[inputName] = newSource;
         }
       }
     }
@@ -144,9 +144,9 @@ function replaceSourceReferences(model: ModuleFlowModel, oldSource: string, newS
 function removeReferencesToSource(model: ModuleFlowModel, source: string): void {
   for (const node of model.nodes) {
     if (hasInputMappings(node)) {
-      for (const param of node.params) {
-        if (node.inputMappings[param.name] === source) {
-          node.inputMappings[param.name] = `input.${param.name}`;
+      for (const [inputName, mappedSource] of Object.entries(node.inputMappings)) {
+        if (mappedSource === source) {
+          node.inputMappings[inputName] = `input.${inputName}`;
         }
       }
     }
@@ -337,6 +337,30 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
     inputMappings: defaultInputMappings(toolExport.params),
     variableName,
     async: toolExport.async,
+    position: message.position
+  });
+  await persistModel(targetUri, model);
+}
+
+export async function addModuleFlowCall(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { functionNodeId: string; position?: { x: number; y: number } }
+): Promise<void> {
+  const inputNode = model.nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+    node.kind === "input" && node.id === message.functionNodeId
+  );
+  if (!inputNode) {
+    return;
+  }
+
+  model.nodes.splice(model.nodes.length - 1, 0, {
+    id: uniqueNodeId(model, "node"),
+    kind: "moduleFlowCall",
+    label: inputNode.functionName,
+    functionNodeId: inputNode.id,
+    inputMappings: { input: "input" },
+    variableName: nextVariableName(model, resultVariableBase(inputNode.functionName)),
     position: message.position
   });
   await persistModel(targetUri, model);
@@ -584,4 +608,22 @@ export async function renameFunction(targetUri: vscode.Uri, model: ModuleFlowMod
 
 export async function setInputExpression(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; paramName: string; source: string }): Promise<void> {
   await mapInput(targetUri, model, message);
+}
+
+export async function setModuleFlowCallFunction(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { nodeId: string; functionNodeId: string }
+): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  const inputNode = model.nodes.find((item): item is Extract<ModuleFlowNode, { kind: "input" }> =>
+    item.kind === "input" && item.id === message.functionNodeId
+  );
+  if (!node || node.kind !== "moduleFlowCall" || !inputNode) {
+    return;
+  }
+
+  node.functionNodeId = message.functionNodeId;
+  node.label = inputNode.functionName;
+  await persistModel(targetUri, model);
 }

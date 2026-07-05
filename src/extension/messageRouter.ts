@@ -3,6 +3,7 @@ import { createInitialModel } from "../graph/jsToGraph";
 import { importTools, loadModelFromFile } from "../model/loadModel";
 import {
   addNode,
+  addModuleFlowCall,
   addFunction,
   addCodeNode,
   deleteEdge,
@@ -13,6 +14,7 @@ import {
   renameVariable,
   renameFunction,
   setInputExpression,
+  setModuleFlowCallFunction,
   setReturnSource,
   updateDescription,
   updateControlFlow,
@@ -82,6 +84,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "addNode") {
       const current = currentModel(context);
       await addNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
+      return;
+    }
+
+    if (message?.type === "addModuleFlowCall") {
+      const current = currentModel(context);
+      await addModuleFlowCall(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       await publishModel(context, current);
       return;
@@ -196,6 +206,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       const current = currentModel(context);
       await setInputExpression(context.targetUri, current, message as never);
       context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "setModuleFlowCallFunction") {
+      const current = currentModel(context);
+      await setModuleFlowCallFunction(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
       return;
     }
 

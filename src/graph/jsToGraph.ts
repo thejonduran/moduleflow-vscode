@@ -368,6 +368,18 @@ export function createModelFromSource(targetFile: string, source: string, import
 
   const nodes: ModuleFlowNode[] = [];
   const controlFlow: ControlFlowEdge[] = [];
+  const inputIdByFunctionName = new Map<string, string>();
+  functionNodes.forEach((functionNode, index) => {
+    const functionName = functionNode.id?.name ?? `main${index + 1}`;
+    let inputId = index === 0 ? "input" : `${functionName}-input`;
+    const discoveredInputMetadata = functionNode.body.body[0]
+      ? readInputMetadataFromComments(statementComments(functionNode.body.body[0]))
+      : undefined;
+    if (discoveredInputMetadata?.nodeId) {
+      inputId = discoveredInputMetadata.nodeId;
+    }
+    inputIdByFunctionName.set(functionName, inputId);
+  });
   let functionIndex = 0;
 
   for (const functionNode of functionNodes) {
@@ -551,6 +563,23 @@ export function createModelFromSource(targetFile: string, source: string, import
         }
 
         const args = expression.arguments.map((arg) => generate(arg).code);
+        const moduleFlowInputId = inputIdByFunctionName.get(exportName);
+        if (moduleFlowInputId) {
+          const nodeId = currentMetadata.nodeId ?? `${functionName}-node-${nodeIndex++}`;
+          parsedNodes.push({
+            id: nodeId,
+            kind: "moduleFlowCall",
+            label: exportName,
+            functionNodeId: moduleFlowInputId,
+            inputMappings: { input: args[0] ?? "input" },
+            variableName,
+            position: currentMetadata.position,
+            description: currentMetadata.description
+          });
+          statementNodeIds.push(nodeId);
+          continue;
+        }
+
         const params = found && found.toolExport.kind !== "class" ? found.toolExport.params : paramsForArgs(args);
         const nodeId = currentMetadata.nodeId ?? `${functionName}-node-${nodeIndex++}`;
         parsedNodes.push({

@@ -280,6 +280,53 @@ const moduleFlowTools = parseModuleFlowFunctions(multiFunctionSource);
 assert.deepEqual(moduleFlowTools.map((item) => item.name), ["main", "lookupUser"]);
 assert.deepEqual(moduleFlowTools.map((item) => item.params.map((param) => param.name)), [["input"], ["input"]]);
 
+const moduleFlowCallNodes = [
+  {
+    id: "input-1",
+    kind: "input",
+    label: "input",
+    functionName: "main"
+  },
+  {
+    id: "module-call-1",
+    kind: "moduleFlowCall",
+    label: "helper",
+    functionNodeId: "input-2",
+    inputMappings: { input: "input" },
+    variableName: "helperResult"
+  },
+  {
+    id: "return-1",
+    kind: "return",
+    label: "return",
+    source: "helperResult"
+  },
+  {
+    id: "input-2",
+    kind: "input",
+    label: "input",
+    functionName: "helper"
+  },
+  {
+    id: "return-2",
+    kind: "return",
+    label: "return",
+    source: "input"
+  }
+];
+const moduleFlowCallSource = buildRegion("main", moduleFlowCallNodes, [
+  { from: "input-1", to: "module-call-1" },
+  { from: "module-call-1", to: "return-1" },
+  { from: "input-2", to: "return-2" }
+]);
+assert.match(moduleFlowCallSource, /const helperResult = await helper\(input\);/);
+const moduleFlowCallModel = createModelFromSource("main.js", moduleFlowCallSource, []);
+const moduleFlowCallNode = moduleFlowCallModel.nodes.find((node) => node.id === "module-call-1");
+assert.equal(moduleFlowCallNode.kind, "moduleFlowCall");
+assert.equal(moduleFlowCallNode.functionNodeId, "input-2");
+assert.deepEqual(moduleFlowCallNode.inputMappings, { input: "input" });
+assert.equal(moduleFlowCallNode.variableName, "helperResult");
+
 const uniqueInputReturnSource = `
 // @moduleflow:start
 export async function main(input) {

@@ -89,6 +89,17 @@ export type ModuleFlowNode =
     }
   | {
       id: string;
+      kind: "moduleFlowCall";
+      label: string;
+      functionNodeId: string;
+      inputMappings: InputMappings;
+      variableName: string;
+      position?: NodePosition;
+      description?: string;
+      warning?: string;
+    }
+  | {
+      id: string;
       kind: "classInstance";
       label: string;
       modulePath: string;
