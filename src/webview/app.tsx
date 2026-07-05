@@ -28,7 +28,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ModuleFlowModel, ModuleFlowNode } from "../types";
 import { codeOutputs } from "../graph/codeOutputs";
-import { discoverFlows, previousScopedSources } from "../graph/flowDiscovery";
+import { discoverFlows, previousScopedSourceRefs, previousScopedSources } from "../graph/flowDiscovery";
 
 declare const acquireVsCodeApi: () => {
   postMessage: (message: unknown) => void;
@@ -139,8 +139,9 @@ function canUseSource(model: ModuleFlowModel, sourceNode: ModuleFlowNode, target
     return ownerByNodeId.get(targetNode.id) === sourceNode.id;
   }
 
+  const scopedSources = previousScopedSourceRefs(model.nodes, model.controlFlow, targetNode.id);
   return outputNamesForNode(sourceNode).some((source) =>
-    previousScopedSources(model.nodes, model.controlFlow, targetNode.id).includes(source)
+    scopedSources.some((scopedSource) => scopedSource.nodeId === sourceNode.id && scopedSource.name === source)
   );
 }
 
@@ -150,7 +151,8 @@ function sourceNodeIdFor(model: ModuleFlowModel, source: string, targetNode: Mod
     return flows.find((flow) => flow.nodes.some((node) => node.id === targetNode.id))?.input.id;
   }
 
-  return model.nodes.find((node) => outputNamesForNode(node).includes(source) && canUseSource(model, node, targetNode))?.id;
+  return previousScopedSourceRefs(model.nodes, model.controlFlow, targetNode.id)
+    .find((scopedSource) => scopedSource.name === source)?.nodeId;
 }
 
 function toFlowEdges(model: ModuleFlowModel): Edge[] {
@@ -244,10 +246,23 @@ function sourceHandleFor(model: ModuleFlowModel, sourceNodeId: string, source: s
   }
 
   if (sourceNode?.kind === "code") {
-    return `output:${source}`;
+    return `output:${sourceNodeId}:${source}`;
   }
 
   return "result";
+}
+
+function sourceFromCodeHandle(sourceHandle: string | null | undefined, sourceNodeId: string): string | undefined {
+  if (!sourceHandle?.startsWith("output:")) {
+    return undefined;
+  }
+
+  const nodePrefix = `output:${sourceNodeId}:`;
+  if (sourceHandle.startsWith(nodePrefix)) {
+    return sourceHandle.slice(nodePrefix.length);
+  }
+
+  return sourceHandle.slice("output:".length);
 }
 
 function cloneModel(model: ModuleFlowModel): ModuleFlowModel {
@@ -744,7 +759,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     : hasVariable(selectedNode)
       ? [{ id: "result", label: "return" }]
       : selectedNode.kind === "code"
-        ? codeOutputs(selectedNode.code).map((name) => ({ id: `output:${name}`, label: name }))
+        ? codeOutputs(selectedNode.code).map((name) => ({ id: `output:${selectedNode.id}:${name}`, label: name }))
         : [];
 
   return (
@@ -1094,14 +1109,14 @@ function App() {
           : `input.${connection.targetHandle}`
         : hasVariable(sourceNode)
           ? sourceNode.variableName
-          : sourceNode.kind === "code" && connection.sourceHandle?.startsWith("output:")
-            ? connection.sourceHandle.slice("output:".length)
+          : sourceNode.kind === "code"
+            ? sourceFromCodeHandle(connection.sourceHandle, sourceNode.id)
             : undefined;
 
       if (!source) {
         return;
       }
-      if (!source.startsWith("input") && !previousScopedSources(model.nodes, model.controlFlow, targetNode.id).includes(source)) {
+      if (!source.startsWith("input") && !canUseSource(model, sourceNode, targetNode)) {
         return;
       }
 

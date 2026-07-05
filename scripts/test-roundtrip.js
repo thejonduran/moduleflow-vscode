@@ -3,7 +3,7 @@ const { buildRegion } = require("../out/codegen/generateRegion");
 const { createModelFromSource } = require("../out/graph/jsToGraph");
 const { parseExports, parseLocalFunctions, parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
 const { codeOutputs } = require("../out/graph/codeOutputs");
-const { previousScopedSources } = require("../out/graph/flowDiscovery");
+const { previousScopedSourceRefs, previousScopedSources } = require("../out/graph/flowDiscovery");
 
 const imports = [
   {
@@ -290,6 +290,68 @@ assert.deepEqual(uniqueInputReturnModel.nodes.map((node) => node.id), ["input-10
 assert.deepEqual(uniqueInputReturnModel.controlFlow, [
   { from: "input-100", to: "return-100" },
   { from: "input-200", to: "return-200" }
+]);
+
+const duplicateCodeSourceNodes = [
+  {
+    id: "input1",
+    kind: "input",
+    label: "input",
+    functionName: "first"
+  },
+  {
+    id: "code1",
+    kind: "code",
+    label: "code",
+    code: "const message = input.message;"
+  },
+  {
+    id: "return1",
+    kind: "return",
+    label: "return",
+    source: "message"
+  },
+  {
+    id: "input2",
+    kind: "input",
+    label: "input",
+    functionName: "second"
+  },
+  {
+    id: "code2",
+    kind: "code",
+    label: "code",
+    code: "const message = input.message;"
+  },
+  {
+    id: "call2",
+    kind: "call",
+    label: "getUserFromResult",
+    modulePath: "./utils.js",
+    exportName: "getUserFromResult",
+    callName: "getUser",
+    params: [{ name: "result", required: true }],
+    inputMappings: { result: "message" },
+    variableName: "user",
+    async: false
+  },
+  {
+    id: "return2",
+    kind: "return",
+    label: "return",
+    source: "user"
+  }
+];
+const duplicateCodeSourceFlow = [
+  { from: "input1", to: "code1" },
+  { from: "code1", to: "return1" },
+  { from: "input2", to: "code2" },
+  { from: "code2", to: "call2" },
+  { from: "call2", to: "return2" }
+];
+assert.deepEqual(previousScopedSources(duplicateCodeSourceNodes, duplicateCodeSourceFlow, "call2"), ["message"]);
+assert.deepEqual(previousScopedSourceRefs(duplicateCodeSourceNodes, duplicateCodeSourceFlow, "call2"), [
+  { nodeId: "code2", name: "message" }
 ]);
 
 const wrapperTools = parseExports(`

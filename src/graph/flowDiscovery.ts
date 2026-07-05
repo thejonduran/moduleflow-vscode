@@ -14,6 +14,11 @@ export type FlowDiscovery = {
   ownerByNodeId: Map<string, string>;
 };
 
+export type ScopedSourceRef = {
+  nodeId: string;
+  name: string;
+};
+
 export function discoverFlows(nodes: ModuleFlowNode[], controlFlow: ControlFlowEdge[]): FlowDiscovery {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const nextByFrom = new Map(controlFlow.map((edge) => [edge.from, edge.to]));
@@ -76,6 +81,14 @@ export function previousScopedSources(
   controlFlow: ControlFlowEdge[],
   targetNodeId: string
 ): string[] {
+  return previousScopedSourceRefs(nodes, controlFlow, targetNodeId).map((source) => source.name);
+}
+
+export function previousScopedSourceRefs(
+  nodes: ModuleFlowNode[],
+  controlFlow: ControlFlowEdge[],
+  targetNodeId: string
+): ScopedSourceRef[] {
   const { flows } = discoverFlows(nodes, controlFlow);
   const flow = flows.find((item) => item.nodes.some((node) => node.id === targetNodeId));
   if (!flow) {
@@ -85,11 +98,11 @@ export function previousScopedSources(
   const targetIndex = flow.nodes.findIndex((node) => node.id === targetNodeId);
   return flow.nodes.slice(0, targetIndex).flatMap((node) => {
     if ("variableName" in node) {
-      return [node.variableName];
+      return [{ nodeId: node.id, name: node.variableName }];
     }
 
     if (node.kind === "code") {
-      return codeOutputs(node.code);
+      return codeOutputs(node.code).map((name) => ({ nodeId: node.id, name }));
     }
 
     return [];
