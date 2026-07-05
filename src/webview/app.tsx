@@ -27,6 +27,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ModuleFlowModel, ModuleFlowNode } from "../types";
+import { codeDependencies } from "../graph/codeDependencies";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows, previousScopedSourceRefs, previousScopedSources } from "../graph/flowDiscovery";
 
@@ -224,6 +225,33 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
           target: returnNode.id,
           targetHandle: "in"
         }
+      });
+    }
+  }
+
+  for (const codeNode of model.nodes.filter((node): node is Extract<ModuleFlowNode, { kind: "code" }> => node.kind === "code")) {
+    for (const dependency of codeDependencies(codeNode.code)) {
+      const sourceNodeId = sourceNodeIdFor(model, dependency, codeNode);
+      if (!sourceNodeId) {
+        continue;
+      }
+
+      edges.push({
+        id: `data:${sourceNodeId}:${dependency}->${codeNode.id}:dependency:${dependency}`,
+        source: sourceNodeId,
+        sourceHandle: sourceHandleFor(model, sourceNodeId, dependency),
+        target: codeNode.id,
+        targetHandle: `dependency:${dependency}`,
+        style: {
+          strokeWidth: 1.6,
+          stroke: "var(--moduleflow-dataEdge)"
+        },
+        data: {
+          kind: "data",
+          target: codeNode.id,
+          targetHandle: `dependency:${dependency}`
+        },
+        animated: false
       });
     }
   }
@@ -753,6 +781,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
       : selectedNode.kind === "return"
         ? [{ id: "in", label: "value" }]
+        : selectedNode.kind === "code"
+          ? codeDependencies(selectedNode.code).map((name) => ({ id: `dependency:${name}`, label: name }))
         : [];
   const outputRows = selectedNode.kind === "input"
     ? [{ id: "input", label: "input" }]
@@ -1097,6 +1127,9 @@ function App() {
       const sourceNode = model.nodes.find((node) => node.id === connection.source);
       const targetNode = model.nodes.find((node) => node.id === connection.target);
       if (!sourceNode || !targetNode) {
+        return;
+      }
+      if (targetNode.kind === "code" && connection.targetHandle.startsWith("dependency:")) {
         return;
       }
       if (!canUseSource(model, sourceNode, targetNode)) {

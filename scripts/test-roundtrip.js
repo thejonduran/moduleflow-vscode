@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { buildRegion } = require("../out/codegen/generateRegion");
 const { createModelFromSource } = require("../out/graph/jsToGraph");
 const { parseExports, parseLocalFunctions, parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
+const { codeDependencies } = require("../out/graph/codeDependencies");
 const { codeOutputs } = require("../out/graph/codeOutputs");
 const { previousScopedSourceRefs, previousScopedSources } = require("../out/graph/flowDiscovery");
 
@@ -161,6 +162,15 @@ const { user, token: authToken, profile: { name = "Unknown" }, ...rest } = respo
 const [first, , third = "fallback", ...remaining] = items;
 `),
   ["user", "authToken", "name", "rest", "first", "third", "remaining"]
+);
+assert.deepEqual(codeDependencies("const message = response.message;\nconsole.log(message);"), ["response"]);
+assert.deepEqual(
+  codeDependencies(`
+const { user, token: authToken } = response;
+const message = formatMessage(user, authToken);
+await audit(message, input.traceId);
+`),
+  ["response", "formatMessage", "audit", "input"]
 );
 
 assert.equal(returnNode.kind, "return");
