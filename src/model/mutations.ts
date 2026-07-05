@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { discoverFlows } from "../graph/flowDiscovery";
 import { ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
-import { moduleFlowModulePath, readText, writeText } from "./loadModel";
+import { loadModelFromFile, moduleFlowModulePath, readText, writeText } from "./loadModel";
 
 function toVariableName(raw: string): string {
   const base = raw.replace(/^[A-Z]/, (letter) => letter.toLowerCase()).replace(/[^\w$]/g, "");
@@ -65,6 +65,21 @@ function findToolExport(model: ModuleFlowModel, modulePath: string, exportName: 
   return model.imports
     .find((item) => item.modulePath === modulePath)
     ?.exports.find((item) => item.name === exportName);
+}
+
+function mergeImports(model: ModuleFlowModel, imports: ModuleFlowModel["imports"]): void {
+  const importsByPath = new Map(model.imports.map((item) => [item.modulePath, item]));
+
+  for (const importedModule of imports) {
+    const existing = importsByPath.get(importedModule.modulePath);
+    if (!existing) {
+      model.imports.push(importedModule);
+      continue;
+    }
+
+    const existingExportNames = new Set(existing.exports.map((item) => item.name));
+    existing.exports.push(...importedModule.exports.filter((item) => !existingExportNames.has(item.name)));
+  }
 }
 
 function updateReturn(model: ModuleFlowModel, returnNodeId: string, source: string): void {
@@ -197,7 +212,13 @@ export async function deleteControlFlowEdge(targetUri: vscode.Uri, model: Module
 }
 
 export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { modulePath: string; exportName: string; methodName?: string | null; position?: { x: number; y: number } }): Promise<void> {
-  const toolExport = findToolExport(model, message.modulePath, message.exportName);
+  let toolExport = findToolExport(model, message.modulePath, message.exportName);
+  if (!toolExport) {
+    const latestModel = await loadModelFromFile(targetUri);
+    mergeImports(model, latestModel.imports);
+    toolExport = findToolExport(model, message.modulePath, message.exportName);
+  }
+
   if (!toolExport) {
     void vscode.window.showErrorMessage("ModuleFlow could not find that imported export.");
     return;
