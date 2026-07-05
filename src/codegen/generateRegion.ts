@@ -7,7 +7,8 @@ const endMarker = "// @moduleflow:end";
 function positionCommentFor(node: ModuleFlowNode): string | undefined {
   const metadataParts = [
     node.position ? `x:${Math.round(node.position.x)}` : undefined,
-    node.position ? `y:${Math.round(node.position.y)}` : undefined
+    node.position ? `y:${Math.round(node.position.y)}` : undefined,
+    node.kind === "code" ? "kind:code" : undefined
   ].filter(Boolean);
 
   return metadataParts.length > 0
@@ -21,14 +22,8 @@ function descriptionCommentFor(node: ModuleFlowNode): string | undefined {
     : undefined;
 }
 
-function codeCommentFor(node: ModuleFlowNode): string | undefined {
-  return node.kind === "code"
-    ? `  // @moduleflow:code ${node.id} ${JSON.stringify(node.code)}`
-    : undefined;
-}
-
 function metadataCommentsFor(node: ModuleFlowNode): string {
-  return [positionCommentFor(node), descriptionCommentFor(node), codeCommentFor(node)].filter(Boolean).join("\n");
+  return [positionCommentFor(node), descriptionCommentFor(node)].filter(Boolean).join("\n");
 }
 
 function argsFor(
@@ -47,7 +42,7 @@ function statementFor(node: ModuleFlowNode): string | undefined {
       .split(/\r?\n/)
       .map((line) => line.trim() ? `  ${line}` : "")
       .join("\n");
-    return `${prefix}${indentedCode}`;
+    return `${prefix}${indentedCode}\n  // @moduleflow:node:end ${node.id}`;
   }
 
   if (node.kind === "classInstance") {

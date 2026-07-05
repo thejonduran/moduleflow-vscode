@@ -119,6 +119,9 @@ const nodes = [
 ];
 
 const source = buildRegion("main", nodes);
+assert.match(source, /@moduleflow:node code-1 x:640 y:260 kind:code/);
+assert.match(source, /@moduleflow:node:end code-1/);
+assert.doesNotMatch(source, /@moduleflow:code code-1/);
 const model = createModelFromSource("main.js", source, imports);
 
 assert.equal(model.nodes.length, 6);
@@ -430,6 +433,55 @@ export async function main(input) {
 `, []);
 assert.deepEqual(expressionModel.nodes.map((node) => node.kind), ["input", "return"]);
 assert.equal(expressionModel.nodes[1].source, "summary");
+
+const legacyCodeModel = createModelFromSource("main.js", `
+// @moduleflow:start
+export async function main(input) {
+  // @moduleflow:node input x:1 y:2
+  // @moduleflow:node code-legacy x:10 y:20
+  // @moduleflow:code code-legacy "const legacyValue = input.value;"
+  const legacyValue = input.value;
+  // @moduleflow:node return x:100 y:20
+  return legacyValue;
+}
+// @moduleflow:end
+`, []);
+assert.deepEqual(legacyCodeModel.nodes.map((node) => node.kind), ["input", "code", "return"]);
+assert.equal(legacyCodeModel.nodes[1].code, "const legacyValue = input.value;");
+
+const commentOnlyCodeModel = createModelFromSource("main.js", `
+// @moduleflow:start
+export async function main(input) {
+  // @moduleflow:node input x:1 y:2
+  // @moduleflow:node code-comment x:10 y:20 kind:code
+  // Keep this note on the canvas.
+  // @moduleflow:node:end code-comment
+  // @moduleflow:node return x:100 y:20
+  return input;
+}
+// @moduleflow:end
+`, []);
+assert.deepEqual(commentOnlyCodeModel.nodes.map((node) => node.kind), ["input", "code", "return"]);
+assert.equal(commentOnlyCodeModel.nodes[1].code, "// Keep this note on the canvas.");
+
+const idOwnedMetadataModel = createModelFromSource("main.js", `
+// @moduleflow:start
+export async function main(input) {
+  // @moduleflow:node input x:1 y:2
+  // @moduleflow:description unrelated-node "Should not attach"
+  // @moduleflow:node status-node x:10 y:20
+  // @moduleflow:description status-node "Should attach"
+  const status = chooseStatus(input.age);
+  // @moduleflow:description wrong-return "Wrong return description"
+  // @moduleflow:node return x:100 y:20
+  // @moduleflow:description return "Right return description"
+  return status;
+}
+// @moduleflow:end
+`, []);
+assert.deepEqual(idOwnedMetadataModel.nodes.map((node) => node.id), ["input", "status-node", "return"]);
+assert.equal(idOwnedMetadataModel.nodes[1].description, "Should attach");
+assert.equal(idOwnedMetadataModel.nodes[2].description, "Right return description");
 
 const legacyGroupModel = createModelFromSource("main.js", `
 // @moduleflow:start

@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useEffect, useRef, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
@@ -424,10 +425,13 @@ function CodeEditor({
           highlightSpecialChars(),
           history(),
           javascript(),
+          closeBrackets(),
+          bracketMatching(),
+          indentOnInput(),
           syntaxHighlighting(moduleFlowHighlightStyle),
           drawSelection(),
           EditorView.lineWrapping,
-          keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+          keymap.of([indentWithTab, ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap]),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) {
               return;

@@ -10,6 +10,7 @@ type ToolExportMatch = {
 
 type Metadata = {
   nodeId?: string;
+  kind?: string;
   position?: NodePosition;
   size?: {
     width: number;
@@ -102,6 +103,10 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
         height: Number(heightMatch[1])
       };
     }
+    const kindMatch = /\bkind:(\w+)/.exec(rest);
+    if (kindMatch) {
+      metadata.kind = kindMatch[1];
+    }
     return { nodeId, metadata };
   }
 
@@ -132,6 +137,11 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
   return undefined;
 }
 
+function parseCodeEndComment(value: string): string | undefined {
+  const match = /^@moduleflow:node:end\s+(\S+)$/.exec(value.trim());
+  return match?.[1];
+}
+
 function mergeMetadata(target: Metadata, source: Metadata): Metadata {
   return {
     ...target,
@@ -139,8 +149,8 @@ function mergeMetadata(target: Metadata, source: Metadata): Metadata {
   };
 }
 
-function readMetadataFromComments(comments: t.Comment[], inputNodeId = "input"): { input?: Metadata; current?: Metadata } {
-  const result: { input?: Metadata; current?: Metadata } = {};
+function metadataByNodeIdFromComments(comments: t.Comment[]): Map<string, Metadata> {
+  const result = new Map<string, Metadata>();
 
   for (const comment of comments) {
     const parsed = parseMetadataComment(comment.value.trim());
@@ -148,18 +158,42 @@ function readMetadataFromComments(comments: t.Comment[], inputNodeId = "input"):
       continue;
     }
 
-    if (parsed.nodeId === inputNodeId) {
-      result.input = mergeMetadata(result.input ?? {}, parsed.metadata);
-    } else if (!parsed.metadata.size) {
-      result.current = mergeMetadata(result.current ?? {}, parsed.metadata);
-    }
+    result.set(parsed.nodeId, mergeMetadata(result.get(parsed.nodeId) ?? {}, parsed.metadata));
   }
 
   return result;
 }
 
+function statementMetadataNodeId(comments: t.Comment[], inputNodeId: string): string | undefined {
+  for (const comment of comments) {
+    const value = comment.value.trim();
+    if (!value.startsWith("@moduleflow:node ")) {
+      continue;
+    }
+
+    const parsed = parseMetadataComment(value);
+    if (!parsed || parsed.nodeId === inputNodeId || parsed.metadata.size || parsed.metadata.kind === "code") {
+      continue;
+    }
+
+    return parsed.nodeId;
+  }
+
+  return undefined;
+}
+
+function readMetadataFromComments(comments: t.Comment[], inputNodeId = "input"): { input?: Metadata; current?: Metadata } {
+  const byNodeId = metadataByNodeIdFromComments(comments);
+  const currentNodeId = statementMetadataNodeId(comments, inputNodeId);
+
+  return {
+    input: byNodeId.get(inputNodeId),
+    current: currentNodeId ? byNodeId.get(currentNodeId) : undefined
+  };
+}
+
 function readInputMetadataFromComments(comments: t.Comment[]): Metadata | undefined {
-  let result: Metadata | undefined;
+  const byNodeId = metadataByNodeIdFromComments(comments);
 
   for (const comment of comments) {
     const parsed = parseMetadataComment(comment.value.trim());
@@ -168,11 +202,11 @@ function readInputMetadataFromComments(comments: t.Comment[]): Metadata | undefi
     }
 
     if (parsed.nodeId === "input" || parsed.nodeId.endsWith("-input")) {
-      result = mergeMetadata(result ?? {}, parsed.metadata);
+      return byNodeId.get(parsed.nodeId);
     }
   }
 
-  return result;
+  return undefined;
 }
 
 function variableDeclarator(statement: t.Statement): { variableName: string; init: t.Expression } | undefined {
@@ -220,6 +254,62 @@ function statementCountForCode(code: string): number {
   } catch {
     return 1;
   }
+}
+
+function leadingCodeEndNodeId(statement: t.Statement): string | undefined {
+  for (const comment of statementComments(statement)) {
+    const nodeId = parseCodeEndComment(comment.value);
+    if (nodeId) {
+      return nodeId;
+    }
+  }
+
+  return undefined;
+}
+
+function commentText(comment: t.Comment): string {
+  return comment.type === "CommentBlock"
+    ? `/*${comment.value}*/`
+    : `//${comment.value}`;
+}
+
+function commentOnlyCodeBlock(comments: t.Comment[], nodeId: string): string | undefined {
+  const startIndex = comments.findIndex((comment) => {
+    const parsed = parseMetadataComment(comment.value.trim());
+    return parsed?.nodeId === nodeId && parsed.metadata.kind === "code";
+  });
+  const endIndex = comments.findIndex((comment, index) =>
+    index > startIndex && parseCodeEndComment(comment.value) === nodeId
+  );
+
+  if (startIndex < 0 || endIndex < 0) {
+    return undefined;
+  }
+
+  return comments
+    .slice(startIndex + 1, endIndex)
+    .filter((comment) => !parseMetadataComment(comment.value.trim()) && !parseCodeEndComment(comment.value))
+    .map(commentText)
+    .join("\n");
+}
+
+function codeStartMetadataFromComments(comments: t.Comment[]): Metadata | undefined {
+  const byNodeId = metadataByNodeIdFromComments(comments);
+
+  for (const comment of comments) {
+    const parsed = parseMetadataComment(comment.value.trim());
+    if (parsed?.metadata.kind === "code") {
+      return byNodeId.get(parsed.nodeId);
+    }
+  }
+
+  return undefined;
+}
+
+function codeForStatements(statements: t.Statement[]): string {
+  return statements
+    .map((statement) => generate(statement, { comments: false }).code)
+    .join("\n");
 }
 
 function findModuleFlowFunctions(source: string): t.FunctionDeclaration[] {
@@ -313,6 +403,49 @@ export function createModelFromSource(targetFile: string, source: string, import
       const metadata = readMetadataFromComments(statementComments(statement), inputId);
       if (metadata.input) {
         Object.assign(inputNode, metadata.input);
+      }
+
+      const codeStartMetadata = codeStartMetadataFromComments(statementComments(statement));
+      if (codeStartMetadata) {
+        const nodeId = codeStartMetadata.nodeId ?? `${functionName}-node-${nodeIndex++}`;
+        const inlineCode = commentOnlyCodeBlock(statementComments(statement), nodeId);
+        if (inlineCode !== undefined) {
+          parsedNodes.push({
+            id: nodeId,
+            kind: "code",
+            label: "code",
+            code: inlineCode,
+            position: codeStartMetadata.position,
+            description: codeStartMetadata.description
+          });
+          statementNodeIds.push(nodeId);
+        } else {
+          const codeStatements: t.Statement[] = [statement];
+          let endIndex = statementIndex;
+
+          for (let nextIndex = statementIndex + 1; nextIndex < functionNode.body.body.length; nextIndex += 1) {
+            const nextStatement = functionNode.body.body[nextIndex];
+            if (leadingCodeEndNodeId(nextStatement) === nodeId) {
+              endIndex = nextIndex - 1;
+              break;
+            }
+
+            codeStatements.push(nextStatement);
+            endIndex = nextIndex;
+          }
+
+          parsedNodes.push({
+            id: nodeId,
+            kind: "code",
+            label: "code",
+            code: codeForStatements(codeStatements),
+            position: codeStartMetadata.position,
+            description: codeStartMetadata.description
+          });
+          statementNodeIds.push(nodeId);
+          statementIndex = endIndex;
+          continue;
+        }
       }
 
       if (t.isReturnStatement(statement)) {
