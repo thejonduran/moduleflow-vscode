@@ -201,7 +201,7 @@ function readInputMetadataFromComments(comments: t.Comment[]): Metadata | undefi
       continue;
     }
 
-    if (parsed.nodeId === "input" || parsed.nodeId.endsWith("-input")) {
+    if (parsed.metadata.kind === "input" || parsed.nodeId === "input" || parsed.nodeId.startsWith("input-") || parsed.nodeId.endsWith("-input")) {
       return byNodeId.get(parsed.nodeId);
     }
   }

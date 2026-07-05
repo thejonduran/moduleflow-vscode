@@ -51,6 +51,19 @@ function nextFunctionName(model: ModuleFlowModel, base: string): string {
   return `${base}${index}`;
 }
 
+function uniqueNodeId(model: ModuleFlowModel, prefix: string): string {
+  const used = new Set(model.nodes.map((node) => node.id));
+
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const id = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    if (!used.has(id)) {
+      return id;
+    }
+  }
+
+  return `${prefix}-${Date.now()}-${model.nodes.length + 1}`;
+}
+
 function defaultInputMappings(params: { name: string }[]): Record<string, string> {
   return Object.fromEntries(params.map((param) => [param.name, `input.${param.name}`]));
 }
@@ -144,6 +157,20 @@ function removeReferencesToSource(model: ModuleFlowModel, source: string): void 
       node.source = "input";
     }
   }
+}
+
+function duplicateNodeId(model: ModuleFlowModel, node: ModuleFlowNode): string {
+  const prefix = node.kind === "code" ? "code" : "node";
+  return uniqueNodeId(model, prefix);
+}
+
+function offsetPosition(position: { x: number; y: number } | undefined): { x: number; y: number } | undefined {
+  return position
+    ? {
+        x: position.x + 36,
+        y: position.y + 36
+      }
+    : undefined;
 }
 
 export async function persistModel(targetUri: vscode.Uri, model: ModuleFlowModel): Promise<void> {
@@ -252,7 +279,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
 
     const variableName = nextVariableName(model, toVariableName(method.name === "get" ? "result" : method.name));
     model.nodes.splice(model.nodes.length - 1, 0, {
-      id: `node-${Date.now()}`,
+      id: uniqueNodeId(model, "node"),
       kind: "methodCall",
       label: `${instanceNode.variableName}.${method.name}`,
       instanceVariableName: instanceNode.variableName,
@@ -270,7 +297,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
   if (toolExport.kind === "class") {
     const variableName = nextVariableName(model, toVariableName(toolExport.name));
     model.nodes.splice(model.nodes.length - 1, 0, {
-      id: `node-${Date.now()}`,
+      id: uniqueNodeId(model, "node"),
       kind: "classInstance",
       label: `new ${toolExport.name}`,
       modulePath,
@@ -287,7 +314,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
 
   const variableName = nextVariableName(model, resultVariableBase(toolExport.name));
   model.nodes.splice(model.nodes.length - 1, 0, {
-    id: `node-${Date.now()}`,
+    id: uniqueNodeId(model, "node"),
     kind: "call",
     label: toolExport.name,
     modulePath,
@@ -304,9 +331,8 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
 
 export async function addFunction(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
   const functionName = nextFunctionName(model, "main");
-  const idBase = functionName === "main" && !model.nodes.some((node) => node.id === "input") ? "" : `${functionName}-`;
-  const inputId = idBase ? `${idBase}input` : "input";
-  const returnId = idBase ? `${idBase}return` : "return";
+  const inputId = uniqueNodeId(model, "input");
+  const returnId = uniqueNodeId(model, "return");
   const position = message.position ?? { x: 80, y: 120 + model.nodes.length * 40 };
 
   model.nodes.push(
@@ -334,7 +360,7 @@ export async function addFunction(targetUri: vscode.Uri, model: ModuleFlowModel,
 
 export async function addCodeNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
   model.nodes.push({
-    id: `code-${Date.now()}`,
+    id: uniqueNodeId(model, "code"),
     kind: "code",
     label: "code",
     code: "// write code here",
@@ -413,6 +439,24 @@ export async function deleteNode(targetUri: vscode.Uri, model: ModuleFlowModel, 
     removeReferencesToSource(model, source);
   }
 
+  await persistModel(targetUri, model);
+}
+
+export async function duplicateNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string }): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind === "input" || node.kind === "return") {
+    return;
+  }
+
+  const duplicatedNode = JSON.parse(JSON.stringify(node)) as ModuleFlowNode;
+  duplicatedNode.id = duplicateNodeId(model, node);
+  duplicatedNode.position = offsetPosition(node.position);
+
+  if (hasVariable(duplicatedNode)) {
+    duplicatedNode.variableName = nextVariableName(model, duplicatedNode.variableName);
+  }
+
+  model.nodes.push(duplicatedNode);
   await persistModel(targetUri, model);
 }
 

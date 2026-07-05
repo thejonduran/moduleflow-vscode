@@ -8,6 +8,8 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
   const metadataParts = [
     node.position ? `x:${Math.round(node.position.x)}` : undefined,
     node.position ? `y:${Math.round(node.position.y)}` : undefined,
+    node.kind === "input" ? "kind:input" : undefined,
+    node.kind === "return" ? "kind:return" : undefined,
     node.kind === "code" ? "kind:code" : undefined
   ].filter(Boolean);
 

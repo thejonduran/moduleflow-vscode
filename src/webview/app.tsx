@@ -740,7 +740,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         ? [{ id: "in", label: "value" }]
         : [];
   const outputRows = selectedNode.kind === "input"
-    ? [{ id: "input", label: "return" }]
+    ? [{ id: "input", label: "input" }]
     : hasVariable(selectedNode)
       ? [{ id: "result", label: "return" }]
       : selectedNode.kind === "code"
@@ -816,17 +816,30 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         )}
 
         {selectedNode.kind !== "input" && selectedNode.kind !== "return" && (
-          <button
-            className="action-button danger"
-            onClick={() =>
-              vscode.postMessage({
-                type: "deleteNode",
-                nodeId: selectedNode.id
-              })
-            }
-          >
-            Delete node
-          </button>
+          <>
+            <button
+              className="action-button"
+              onClick={() =>
+                vscode.postMessage({
+                  type: "duplicateNode",
+                  nodeId: selectedNode.id
+                })
+              }
+            >
+              Duplicate node
+            </button>
+            <button
+              className="action-button danger"
+              onClick={() =>
+                vscode.postMessage({
+                  type: "deleteNode",
+                  nodeId: selectedNode.id
+                })
+              }
+            >
+              Delete node
+            </button>
+          </>
         )}
       </details>
 
@@ -1062,7 +1075,7 @@ function App() {
       }
 
       const source = sourceNode.kind === "input"
-        ? connection.target === "return"
+        ? targetNode.kind === "return"
           ? "input"
           : `input.${connection.targetHandle}`
         : hasVariable(sourceNode)
@@ -1157,6 +1170,27 @@ function App() {
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
+      const duplicateShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d";
+      if (duplicateShortcut) {
+        if (isEditableElement(event.target)) {
+          return;
+        }
+
+        const selectedNodes = nodes.filter((node) => selectedNodeIds.includes(node.id));
+        if (selectedNodes.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        for (const node of selectedNodes) {
+          vscode.postMessage({
+            type: "duplicateNode",
+            nodeId: node.id
+          });
+        }
+        return;
+      }
+
       if (event.key !== "Delete" && event.key !== "Backspace") {
         return;
       }

@@ -6,6 +6,34 @@ function collectPatternNames(pattern: t.VariableDeclarator["id"]): string[] {
     return [pattern.name];
   }
 
+  if (pattern.type === "ObjectPattern") {
+    return pattern.properties.flatMap((property) => {
+      if (property.type === "ObjectProperty") {
+        return collectPatternNames(property.value as t.VariableDeclarator["id"]);
+      }
+
+      if (property.type === "RestElement") {
+        return collectPatternNames(property.argument as t.VariableDeclarator["id"]);
+      }
+
+      return [];
+    });
+  }
+
+  if (pattern.type === "ArrayPattern") {
+    return pattern.elements.flatMap((element) =>
+      element ? collectPatternNames(element as t.VariableDeclarator["id"]) : []
+    );
+  }
+
+  if (pattern.type === "AssignmentPattern") {
+    return collectPatternNames(pattern.left as t.VariableDeclarator["id"]);
+  }
+
+  if (pattern.type === "RestElement") {
+    return collectPatternNames(pattern.argument as t.VariableDeclarator["id"]);
+  }
+
   return [];
 }
 

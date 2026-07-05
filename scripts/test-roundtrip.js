@@ -155,6 +155,13 @@ assert.equal(codeNode.code, "const auditedUser = user;\nconsole.log(\"user\", au
 assert.deepEqual(codeNode.position, { x: 640, y: 260 });
 assert.equal(codeNode.description, "Side effect block");
 assert.deepEqual(codeOutputs("const alpha = 1;\nlet beta = alpha;\nvar gamma;"), ["alpha", "beta", "gamma"]);
+assert.deepEqual(
+  codeOutputs(`
+const { user, token: authToken, profile: { name = "Unknown" }, ...rest } = response;
+const [first, , third = "fallback", ...remaining] = items;
+`),
+  ["user", "authToken", "name", "rest", "first", "third", "remaining"]
+);
 
 assert.equal(returnNode.kind, "return");
 assert.equal(returnNode.source, "user");
@@ -255,6 +262,28 @@ assert.deepEqual(
 const moduleFlowTools = parseModuleFlowFunctions(multiFunctionSource);
 assert.deepEqual(moduleFlowTools.map((item) => item.name), ["main", "lookupUser"]);
 assert.deepEqual(moduleFlowTools.map((item) => item.params.map((param) => param.name)), [["input"], ["input"]]);
+
+const uniqueInputReturnSource = `
+// @moduleflow:start
+export async function main(input) {
+  // @moduleflow:node input-100 x:1 y:2 kind:input
+  // @moduleflow:node return-100 x:100 y:2 kind:return
+  return input;
+}
+
+export async function main2(input) {
+  // @moduleflow:node input-200 x:1 y:80 kind:input
+  // @moduleflow:node return-200 x:100 y:80 kind:return
+  return input;
+}
+// @moduleflow:end
+`;
+const uniqueInputReturnModel = createModelFromSource("main.js", uniqueInputReturnSource, []);
+assert.deepEqual(uniqueInputReturnModel.nodes.map((node) => node.id), ["input-100", "return-100", "input-200", "return-200"]);
+assert.deepEqual(uniqueInputReturnModel.controlFlow, [
+  { from: "input-100", to: "return-100" },
+  { from: "input-200", to: "return-200" }
+]);
 
 const wrapperTools = parseExports(`
 import axios from "axios";
