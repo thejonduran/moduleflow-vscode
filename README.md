@@ -8,6 +8,8 @@ ModuleFlow can import local JavaScript functions, classes, and methods as dragga
 
 This project is currently intended for development and personal use, not marketplace distribution.
 
+<img width="2024" height="1231" alt="Screenshot 2026-07-06 010320" src="https://github.com/user-attachments/assets/d8992b56-e99f-41ef-a054-b84402396911" />
+
 ## Development Setup
 
 Install dependencies:
