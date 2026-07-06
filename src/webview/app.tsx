@@ -123,6 +123,14 @@ function nodePosition(node: ModuleFlowNode, index: number) {
   return { x: 240 + index * 210, y: 120 };
 }
 
+function codeNodeWidth(code: string): number {
+  const longestLine = code
+    .split(/\r?\n/)
+    .reduce((longest, line) => Math.max(longest, line.replace(/\t/g, "  ").length), 0);
+
+  return Math.max(268, Math.min(760, 24 + longestLine * 7.25));
+}
+
 function toFlowNodes(model: ModuleFlowModel, onModelChange?: (model: ModuleFlowModel) => void): Node<FlowNodeData>[] {
   return model.nodes
     .map((node, index) => ({
@@ -346,16 +354,34 @@ function flowNodeSize(node: Node<FlowNodeData>): { width: number; height: number
   };
 }
 
+type ScopeNodePosition = {
+  nodeId: string;
+  position: { x: number; y: number };
+};
+
+type ScopeDragState = {
+  startClientX: number;
+  startClientY: number;
+  zoom: number;
+  moved: boolean;
+  nodes: ScopeNodePosition[];
+};
+
 function FlowScopeOverlays({
   model,
   nodes,
-  onScopeSelect
+  onScopeSelect,
+  onScopeDrag,
+  onScopeDragEnd
 }: {
   model: ModuleFlowModel;
   nodes: Node<FlowNodeData>[];
   onScopeSelect: (inputId: string, additive: boolean) => void;
+  onScopeDrag: (positions: ScopeNodePosition[]) => void;
+  onScopeDragEnd: (positions: ScopeNodePosition[]) => void;
 }) {
   const viewport = useViewport();
+  const dragRef = useRef<ScopeDragState | undefined>();
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const scopes = useMemo(() => {
     return discoverFlows(model.nodes, model.controlFlow).flows.flatMap((flow) => {
@@ -391,6 +417,10 @@ function FlowScopeOverlays({
           id: flow.input.id,
           label: flow.input.functionName,
           complete: flow.complete,
+          nodes: renderedNodes.map((node) => ({
+            nodeId: node.id,
+            position: { ...node.position }
+          })),
           x: (bounds.minX - padding) * viewport.zoom + viewport.x,
           y: (bounds.minY - padding) * viewport.zoom + viewport.y,
           width: (bounds.maxX - bounds.minX + padding * 2) * viewport.zoom,
@@ -399,6 +429,27 @@ function FlowScopeOverlays({
       ];
     });
   }, [model.controlFlow, model.nodes, nodeById, viewport.x, viewport.y, viewport.zoom]);
+
+  const dragPositions = (event: { clientX: number; clientY: number }): ScopeNodePosition[] | undefined => {
+    const drag = dragRef.current;
+    if (!drag) {
+      return undefined;
+    }
+
+    const deltaX = (event.clientX - drag.startClientX) / drag.zoom;
+    const deltaY = (event.clientY - drag.startClientY) / drag.zoom;
+    if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+      drag.moved = true;
+    }
+
+    return drag.nodes.map((node) => ({
+      nodeId: node.nodeId,
+      position: {
+        x: node.position.x + deltaX,
+        y: node.position.y + deltaY
+      }
+    }));
+  };
 
   return (
     <>
@@ -435,6 +486,35 @@ function FlowScopeOverlays({
                 event.preventDefault();
                 event.stopPropagation();
                 onScopeSelect(scope.id, event.shiftKey);
+                dragRef.current = {
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                  zoom: viewport.zoom,
+                  moved: false,
+                  nodes: scope.nodes
+                };
+
+                const onMove = (moveEvent: PointerEvent) => {
+                  const positions = dragPositions(moveEvent);
+                  if (positions) {
+                    onScopeDrag(positions);
+                  }
+                };
+                const onEnd = (endEvent: PointerEvent) => {
+                  const drag = dragRef.current;
+                  const positions = dragPositions(endEvent);
+                  dragRef.current = undefined;
+                  window.removeEventListener("pointermove", onMove);
+                  window.removeEventListener("pointerup", onEnd);
+                  window.removeEventListener("pointercancel", onEnd);
+                  if (positions && drag?.moved) {
+                    onScopeDragEnd(positions);
+                  }
+                };
+
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onEnd);
+                window.addEventListener("pointercancel", onEnd);
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -840,9 +920,12 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       : selectedNode.kind === "code"
         ? codeOutputs(selectedNode.code).map((name) => ({ id: `output:${selectedNode.id}:${name}`, label: name }))
         : [];
+  const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code"
+    ? { width: codeNodeWidth(selectedNode.code) }
+    : undefined;
 
   return (
-    <div className={`node-card node-card-${selectedNode.kind}`}>
+    <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
       {!hasVariable(selectedNode) && selectedNode.kind !== "input" && <div className="node-title-label">{selectedNode.kind}</div>}
       {hasVariable(selectedNode) ? (
         <input
@@ -1314,6 +1397,33 @@ function App() {
     setSelectedEdge(undefined);
   }, [model.controlFlow, model.nodes, setEdges, setNodes]);
 
+  const onScopeDrag = useCallback((positions: ScopeNodePosition[]) => {
+    const nextPositionById = new Map(positions.map((item) => [item.nodeId, item.position]));
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => ({
+        ...node,
+        position: nextPositionById.get(node.id) ?? node.position
+      }))
+    );
+  }, [setNodes]);
+
+  const onScopeDragEnd = useCallback((positions: ScopeNodePosition[]) => {
+    const nextPositionById = new Map(positions.map((item) => [item.nodeId, item.position]));
+    const nextModel = cloneModel(model);
+    for (const node of nextModel.nodes) {
+      const position = nextPositionById.get(node.id);
+      if (position) {
+        node.position = position;
+      }
+    }
+    setModel(nextModel);
+
+    vscode.postMessage({
+      type: "updatePositions",
+      positions
+    });
+  }, [model]);
+
   const onNodesDelete = useCallback((deletedNodes: Node[]) => {
     for (const node of deletedNodes) {
       vscode.postMessage({
@@ -1426,7 +1536,13 @@ function App() {
           onDrop={onDrop}
         >
           <Background />
-          <FlowScopeOverlays model={model} nodes={nodes} onScopeSelect={onScopeSelect} />
+          <FlowScopeOverlays
+            model={model}
+            nodes={nodes}
+            onScopeSelect={onScopeSelect}
+            onScopeDrag={onScopeDrag}
+            onScopeDragEnd={onScopeDragEnd}
+          />
           <Controls />
           <MiniMap pannable zoomable />
         </ReactFlow>
@@ -1630,22 +1746,27 @@ style.textContent = `
 
   .scope-label {
     position: absolute;
-    top: -11px;
+    top: -16px;
     left: 14px;
     z-index: 1;
     width: auto;
-    padding: 2px 7px;
+    min-width: 64px;
+    padding: 5px 11px;
     color: var(--moduleflow-flowEdge);
     background: var(--vscode-editor-background);
     border: 1px solid rgba(215, 168, 70, 0.30);
     border-radius: 999px;
-    cursor: pointer;
-    font-size: 10px;
+    cursor: grab;
+    font-size: 12px;
     font-weight: 700;
-    line-height: 1.3;
+    line-height: 1.25;
     letter-spacing: 0.04em;
     pointer-events: auto;
     text-align: center;
+  }
+
+  .scope-label:active {
+    cursor: grabbing;
   }
 
   .scope-label:hover {

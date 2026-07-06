@@ -19,7 +19,8 @@ import {
   updateDescription,
   updateControlFlow,
   updateCode,
-  updatePosition
+  updatePosition,
+  updatePositions
 } from "../model/mutations";
 import { ModuleFlowModel } from "../types";
 import { renderHtml } from "../webview/renderHtml";
@@ -130,6 +131,13 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "updatePosition") {
       const current = currentModel(context);
       await updatePosition(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updatePositions") {
+      const current = currentModel(context);
+      await updatePositions(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       return;
     }

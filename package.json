@@ -4,6 +4,10 @@
   "description": "A visual module orchestrator for composing JavaScript exports directly into an editable JavaScript file.",
   "version": "0.0.1",
   "publisher": "local-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thejonduran/moduleflow-vscode.git"
+  },
   "engines": {
     "vscode": "^1.92.0"
   },

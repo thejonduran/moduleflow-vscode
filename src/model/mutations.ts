@@ -426,6 +426,18 @@ export async function updatePosition(targetUri: vscode.Uri, model: ModuleFlowMod
   await persistModel(targetUri, model);
 }
 
+export async function updatePositions(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { positions: { nodeId: string; position: { x: number; y: number } }[] }
+): Promise<void> {
+  for (const item of message.positions) {
+    setNodePosition(model, item.nodeId, item.position);
+  }
+
+  await persistModel(targetUri, model);
+}
+
 export async function updateDescription(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; description: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
   if (!node) {
