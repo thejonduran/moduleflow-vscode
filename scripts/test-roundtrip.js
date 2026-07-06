@@ -173,6 +173,21 @@ await audit(message, input.traceId);
 `),
   ["response", "formatMessage", "audit", "input"]
 );
+assert.deepEqual(
+  codeDependencies(`
+const dude = [
+  { bro: "hello" },
+  { bro: "wtf" }
+];
+const filteredDude = dude.filter(obj => obj.bro === "hello");
+console.log(filteredDude);
+`),
+  []
+);
+assert.deepEqual(
+  codeDependencies("const names = people.map(({ name }) => name.toUpperCase());"),
+  ["people"]
+);
 
 assert.equal(returnNode.kind, "return");
 assert.equal(returnNode.source, "user");

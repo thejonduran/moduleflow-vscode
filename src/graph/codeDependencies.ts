@@ -70,6 +70,11 @@ const visitorKeys: Record<string, string[]> = {
 
 type NodeWithChildren = t.Node & Record<string, unknown>;
 
+type Scope = {
+  names: Set<string>;
+  parent?: Scope;
+};
+
 function isNode(value: unknown): value is t.Node {
   return Boolean(value && typeof value === "object" && "type" in value && typeof (value as { type?: unknown }).type === "string");
 }
@@ -146,33 +151,6 @@ function addBindingNames(node: t.Node, names: Set<string>): void {
   }
 }
 
-function visitNode(
-  node: t.Node | null | undefined,
-  parent: t.Node | undefined,
-  grandparent: t.Node | undefined,
-  visit: (node: t.Node, parent: t.Node | undefined, grandparent: t.Node | undefined) => void
-): void {
-  if (!node) {
-    return;
-  }
-
-  visit(node, parent, grandparent);
-
-  const keys = visitorKeys[node.type] ?? [];
-  for (const key of keys) {
-    const value = (node as NodeWithChildren)[key];
-    if (Array.isArray(value)) {
-      for (const child of value) {
-        if (isNode(child)) {
-          visitNode(child, node, parent, visit);
-        }
-      }
-    } else if (isNode(value)) {
-      visitNode(value, node, parent, visit);
-    }
-  }
-}
-
 function isReferencedIdentifier(node: t.Identifier, parent: t.Node, grandparent: t.Node | undefined): boolean {
   if (parent.type === "MemberExpression" || parent.type === "OptionalMemberExpression") {
     if (parent.property === node) {
@@ -218,6 +196,83 @@ function isReferencedIdentifier(node: t.Identifier, parent: t.Node, grandparent:
   return true;
 }
 
+function hasScopeName(scope: Scope, name: string): boolean {
+  let current: Scope | undefined = scope;
+  while (current) {
+    if (current.names.has(name)) {
+      return true;
+    }
+    current = current.parent;
+  }
+
+  return false;
+}
+
+function childScopeFor(node: t.Node, parentScope: Scope): Scope {
+  const names = new Set<string>();
+
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression"
+  ) {
+    if (node.type === "FunctionExpression" && node.id) {
+      names.add(node.id.name);
+    }
+
+    for (const param of node.params) {
+      for (const name of collectPatternNames(param)) {
+        names.add(name);
+      }
+    }
+  }
+
+  if (node.type === "CatchClause" && node.param) {
+    for (const name of collectPatternNames(node.param)) {
+      names.add(name);
+    }
+  }
+
+  return { names, parent: parentScope };
+}
+
+function visitNodeWithScope(
+  node: t.Node | null | undefined,
+  parent: t.Node | undefined,
+  grandparent: t.Node | undefined,
+  scope: Scope,
+  visit: (node: t.Node, parent: t.Node | undefined, grandparent: t.Node | undefined, scope: Scope) => void
+): void {
+  if (!node) {
+    return;
+  }
+
+  const currentScope = (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "CatchClause"
+  )
+    ? childScopeFor(node, scope)
+    : scope;
+
+  visit(node, parent, grandparent, currentScope);
+
+  const keys = visitorKeys[node.type] ?? [];
+  for (const key of keys) {
+    const value = (node as NodeWithChildren)[key];
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (isNode(child)) {
+          visitNodeWithScope(child, node, parent, currentScope, visit);
+        }
+      }
+    } else if (isNode(value)) {
+      visitNodeWithScope(value, node, parent, currentScope, visit);
+    }
+  }
+}
+
 export function codeDependencies(code: string): string[] {
   let ast: t.File;
   try {
@@ -229,20 +284,20 @@ export function codeDependencies(code: string): string[] {
     return [];
   }
 
-  const localNames = new Set<string>();
+  const rootScope: Scope = { names: new Set<string>() };
   for (const statement of ast.program.body) {
-    addBindingNames(statement, localNames);
+    addBindingNames(statement, rootScope.names);
   }
 
   const dependencies: string[] = [];
   const seen = new Set<string>();
 
-  visitNode(ast.program, undefined, undefined, (node, parent, grandparent) => {
+  visitNodeWithScope(ast.program, undefined, undefined, rootScope, (node, parent, grandparent, scope) => {
     if (node.type !== "Identifier" || !parent || !isReferencedIdentifier(node, parent, grandparent)) {
       return;
     }
 
-    if (localNames.has(node.name) || globalNames.has(node.name) || seen.has(node.name)) {
+    if (hasScopeName(scope, node.name) || globalNames.has(node.name) || seen.has(node.name)) {
       return;
     }
 
