@@ -1,6 +1,7 @@
 import { parse } from "@babel/parser";
 import generate from "@babel/generator";
 import * as t from "@babel/types";
+import { inspectModuleFlowRegion } from "../codegen/moduleFlowRegion";
 import { ModuleExport, ExportParameter, MethodDefinition } from "../types";
 
 function parseModule(source: string): t.File {
@@ -209,12 +210,21 @@ export function parseExports(source: string): ModuleExport[] {
 }
 
 export function stripModuleFlowRegion(source: string): string {
-  return source.replace(/\/\/\s*@moduleflow:start[\s\S]*?\/\/\s*@moduleflow:end/g, "");
+  const inspection = inspectModuleFlowRegion(source);
+  if (!inspection.ok || !inspection.hasRegion) {
+    return source;
+  }
+
+  return `${source.slice(0, inspection.start)}${source.slice(inspection.regionEnd)}`;
 }
 
 function moduleFlowRegion(source: string): string | undefined {
-  const match = /\/\/\s*@moduleflow:start([\s\S]*?)\/\/\s*@moduleflow:end/.exec(source);
-  return match?.[1];
+  const inspection = inspectModuleFlowRegion(source);
+  if (!inspection.ok || !inspection.hasRegion) {
+    return undefined;
+  }
+
+  return source.slice(inspection.contentStart, inspection.contentEnd);
 }
 
 export function parseModuleFlowFunctions(source: string): ModuleExport[] {

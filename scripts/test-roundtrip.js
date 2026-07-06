@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
-const { buildRegion } = require("../out/codegen/generateRegion");
+const { buildRegion, hasRegion, upsertRegion } = require("../out/codegen/generateRegion");
+const { inspectModuleFlowRegion } = require("../out/codegen/moduleFlowRegion");
 const { createModelFromSource } = require("../out/graph/jsToGraph");
 const { parseExports, parseLocalFunctions, parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
 const { codeDependencies } = require("../out/graph/codeDependencies");
@@ -185,6 +186,73 @@ assert.deepEqual(model.controlFlow, [
   { from: "code-1", to: "return" }
 ]);
 assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "return"), ["client", "result", "user", "auditedUser"]);
+
+const safeOutsideSource = [
+  'import axios from "axios";',
+  "",
+  "function helperOutside() {",
+  "  return axios;",
+  "}",
+  "",
+  "// @moduleflow:start",
+  "export async function main(input) {",
+  "  return input;",
+  "}",
+  "// @moduleflow:end",
+  "",
+  "export const after = 1;"
+].join("\n");
+const replacedSafeOutsideSource = upsertRegion(safeOutsideSource, buildRegion("main", nodes, [
+  { from: "input", to: "return" }
+]));
+assert.match(replacedSafeOutsideSource, /import axios from "axios";/);
+assert.match(replacedSafeOutsideSource, /function helperOutside/);
+assert.match(replacedSafeOutsideSource, /export const after = 1;/);
+assert.equal(hasRegion('const marker = "// @moduleflow:start";'), false);
+assert.deepEqual(inspectModuleFlowRegion('const marker = "// @moduleflow:start";'), { ok: true, hasRegion: false });
+assert.throws(
+  () => upsertRegion("// @moduleflow:start\nexport const value = 1;\n", buildRegion("main", nodes)),
+  /invalid ModuleFlow region/
+);
+assert.throws(
+  () => upsertRegion("// @moduleflow:start\n// @moduleflow:start\n// @moduleflow:end\n", buildRegion("main", nodes)),
+  /invalid ModuleFlow region/
+);
+const malformedMetadataSource = [
+  "// @moduleflow:start",
+  "export async function main(input) {",
+  "  // @moduleflow:nodee input x:1 y:2 kind:input",
+  "  return input;",
+  "}",
+  "// @moduleflow:end"
+].join("\n");
+assert.throws(
+  () => upsertRegion(malformedMetadataSource, buildRegion("main", nodes)),
+  /Unknown ModuleFlow metadata lines/
+);
+const repairedMetadataSource = malformedMetadataSource.replace("@moduleflow:nodee", "@moduleflow:node");
+const rewrittenRepairedMetadataSource = upsertRegion(repairedMetadataSource, buildRegion("main", nodes, [
+  { from: "input", to: "return" }
+]));
+assert.equal((rewrittenRepairedMetadataSource.match(/@moduleflow:start/g) ?? []).length, 1);
+assert.equal((rewrittenRepairedMetadataSource.match(/@moduleflow:end/g) ?? []).length, 1);
+const leadingBlankRegionSource = [
+  "",
+  "",
+  "// @moduleflow:start",
+  "export async function main(input) {",
+  "  // @moduleflow:node input x:1 y:2 kind:input",
+  "  // @moduleflow:node return x:100 y:2 kind:return",
+  "  return input;",
+  "}",
+  "// @moduleflow:end",
+  ""
+].join("\n");
+const rewrittenLeadingBlankRegionSource = upsertRegion(leadingBlankRegionSource, buildRegion("main", nodes, [
+  { from: "input", to: "return" }
+]));
+assert.equal((rewrittenLeadingBlankRegionSource.match(/@moduleflow:start/g) ?? []).length, 1);
+assert.equal((rewrittenLeadingBlankRegionSource.match(/@moduleflow:end/g) ?? []).length, 1);
 
 const reorderedSource = buildRegion("main", nodes, [
   { from: "input", to: "call-1" },

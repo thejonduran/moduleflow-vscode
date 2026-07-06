@@ -1,8 +1,6 @@
 import { ControlFlowEdge, ModuleFlowNode } from "../types";
 import { discoverFlows } from "../graph/flowDiscovery";
-
-const startMarker = "// @moduleflow:start";
-const endMarker = "// @moduleflow:end";
+import { assertWritableModuleFlowRegion, inspectModuleFlowRegion, startMarker, endMarker } from "./moduleFlowRegion";
 
 function positionCommentFor(node: ModuleFlowNode): string | undefined {
   const metadataParts = [
@@ -90,9 +88,8 @@ export function buildDefaultRegion(functionName: string): string {
 }
 
 export function hasRegion(source: string): boolean {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker);
-  return start >= 0 && end > start;
+  const inspection = inspectModuleFlowRegion(source);
+  return inspection.ok && inspection.hasRegion;
 }
 
 function buildFunction(flow: ReturnType<typeof discoverFlows>["flows"][number], nodes: ModuleFlowNode[]): string {
@@ -140,12 +137,11 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
 }
 
 export function upsertRegion(source: string, region: string): string {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker);
+  const inspection = assertWritableModuleFlowRegion(source);
 
-  if (start >= 0 && end > start) {
-    const before = source.slice(0, start).trimEnd();
-    const after = source.slice(end + endMarker.length).trimStart();
+  if (inspection.hasRegion) {
+    const before = source.slice(0, inspection.start).trimEnd();
+    const after = source.slice(inspection.regionEnd).trimStart();
     return `${before}\n\n${region}\n${after}`.trimEnd() + "\n";
   }
 

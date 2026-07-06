@@ -1,6 +1,7 @@
 import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
+import { inspectModuleFlowRegion } from "../codegen/moduleFlowRegion";
 import { ControlFlowEdge, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition } from "../types";
 
 type ToolExportMatch = {
@@ -335,15 +336,15 @@ function findModuleFlowFunctions(source: string): t.FunctionDeclaration[] {
 }
 
 function moduleFlowRegion(source: string): string | undefined {
-  const startMarker = "// @moduleflow:start";
-  const endMarker = "// @moduleflow:end";
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker);
-  if (start < 0 || end <= start) {
+  const inspection = inspectModuleFlowRegion(source);
+  if (!inspection.ok) {
+    throw new Error(inspection.message);
+  }
+  if (!inspection.hasRegion) {
     return undefined;
   }
 
-  return source.slice(start + startMarker.length, end);
+  return source.slice(inspection.contentStart, inspection.contentEnd);
 }
 
 export function createModelFromSource(targetFile: string, source: string, imports: ImportedToolModule[]): ModuleFlowModel {
