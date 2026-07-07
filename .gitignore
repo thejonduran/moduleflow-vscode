@@ -1,6 +1,7 @@
 node_modules/
 out/
 media/
+sample/
 *.vsix
 !moduleflow-vscode-0.0.1.vsix
 *.log
