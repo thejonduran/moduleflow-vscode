@@ -71,6 +71,9 @@ type ToolDragPayload =
   | {
       type: "addModuleFlowCall";
       functionNodeId: string;
+    }
+  | {
+      type: "addMarkdownNode";
     };
 
 function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { variableName: string }> {
@@ -129,6 +132,13 @@ function codeNodeWidth(code: string): number {
     .reduce((longest, line) => Math.max(longest, line.replace(/\t/g, "  ").length), 0);
 
   return Math.max(268, Math.min(760, 24 + longestLine * 7.25));
+}
+
+function markdownNodeSize(node: Extract<ModuleFlowNode, { kind: "markdown" }>): { width: number; height: number } {
+  return {
+    width: node.size?.width ?? 350,
+    height: node.size?.height ?? 200
+  };
 }
 
 function toFlowNodes(model: ModuleFlowModel, onModelChange?: (model: ModuleFlowModel) => void): Node<FlowNodeData>[] {
@@ -571,6 +581,75 @@ function SourceSelect({
   );
 }
 
+function renderMarkdown(markdown: string): React.ReactNode {
+  const lines = markdown.trim() ? markdown.split(/\r?\n/) : ["Click to edit markdown"];
+  const rendered: React.ReactNode[] = [];
+  let listItems: string[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+
+  const flushList = () => {
+    if (listItems.length === 0) {
+      return;
+    }
+    rendered.push(
+      <ul key={`list-${rendered.length}`}>
+        {listItems.map((item, index) => <li key={index}>{item}</li>)}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  const flushCode = () => {
+    if (codeLines.length === 0) {
+      return;
+    }
+    rendered.push(<pre key={`code-${rendered.length}`}><code>{codeLines.join("\n")}</code></pre>);
+    codeLines = [];
+  };
+
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      if (inCode) {
+        flushCode();
+      } else {
+        flushList();
+      }
+      inCode = !inCode;
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushList();
+      const level = heading[1].length;
+      const Tag = `h${level}` as "h1" | "h2" | "h3";
+      rendered.push(<Tag key={`heading-${rendered.length}`}>{heading[2]}</Tag>);
+      continue;
+    }
+
+    const listItem = /^[*-]\s+(.+)$/.exec(line);
+    if (listItem) {
+      listItems.push(listItem[1]);
+      continue;
+    }
+
+    flushList();
+    if (line.trim()) {
+      rendered.push(<p key={`paragraph-${rendered.length}`}>{line}</p>);
+    }
+  }
+
+  flushList();
+  flushCode();
+  return rendered;
+}
+
 function CodeEditor({
   value,
   onChange,
@@ -738,6 +817,7 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
 const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const { model, node: selectedNode, onModelChange, sources } = data;
   const updateNodeInternals = useUpdateNodeInternals();
+  const [editingMarkdown, setEditingMarkdown] = useState(false);
 
   useEffect(() => {
     if (selectedNode.kind !== "code") {
@@ -903,6 +983,147 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       code
     });
   };
+
+  const updateMarkdownLocal = (markdown: string) => {
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "markdown") {
+        node.markdown = markdown;
+        onModelChange(nextModel);
+      }
+    }
+  };
+
+  const commitMarkdown = (markdown: string) => {
+    vscode.postMessage({
+      type: "updateMarkdown",
+      nodeId: selectedNode.id,
+      markdown
+    });
+  };
+
+  const resizeMarkdown = (size: { width: number; height: number }) => {
+    if (selectedNode.kind !== "markdown") {
+      return;
+    }
+
+    const nextSize = {
+      width: Math.max(220, Math.round(size.width)),
+      height: Math.max(140, Math.round(size.height))
+    };
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "markdown") {
+        node.size = nextSize;
+        onModelChange(nextModel);
+        window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
+      }
+    }
+  };
+
+  const commitMarkdownSize = (size: { width: number; height: number }) => {
+    vscode.postMessage({
+      type: "updateNodeSize",
+      nodeId: selectedNode.id,
+      size
+    });
+  };
+
+  if (selectedNode.kind === "markdown") {
+    const size = markdownNodeSize(selectedNode);
+
+    return (
+      <div className="node-card node-card-markdown" style={{ width: size.width, height: size.height }}>
+        {editingMarkdown ? (
+          <textarea
+            autoFocus
+            className="markdown-editor nodrag nopan"
+            value={selectedNode.markdown}
+            onBlur={() => {
+              setEditingMarkdown(false);
+              commitMarkdown(selectedNode.markdown);
+            }}
+            onChange={(event) => updateMarkdownLocal(event.currentTarget.value)}
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+          />
+        ) : (
+          <div
+            className={`markdown-preview ${selectedNode.markdown.trim() ? "" : "empty"}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setEditingMarkdown(true);
+            }}
+          >
+            {renderMarkdown(selectedNode.markdown)}
+          </div>
+        )}
+
+        <details className="node-properties markdown-properties nodrag">
+          <summary>Properties</summary>
+          <button
+            className="action-button"
+            onClick={() =>
+              vscode.postMessage({
+                type: "duplicateNode",
+                nodeId: selectedNode.id
+              })
+            }
+          >
+            Duplicate node
+          </button>
+          <button
+            className="action-button danger"
+            onClick={() =>
+              vscode.postMessage({
+                type: "deleteNode",
+                nodeId: selectedNode.id
+              })
+            }
+          >
+            Delete node
+          </button>
+        </details>
+
+        <div
+          className="markdown-resize-handle nodrag nopan"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const startSize = markdownNodeSize(selectedNode);
+            let latestSize = startSize;
+
+            const onMove = (moveEvent: PointerEvent) => {
+              latestSize = {
+                width: startSize.width + moveEvent.clientX - startX,
+                height: startSize.height + moveEvent.clientY - startY
+              };
+              resizeMarkdown(latestSize);
+            };
+            const onEnd = () => {
+              window.removeEventListener("pointermove", onMove);
+              window.removeEventListener("pointerup", onEnd);
+              window.removeEventListener("pointercancel", onEnd);
+              const committedSize = {
+                width: Math.max(220, Math.round(latestSize.width)),
+                height: Math.max(140, Math.round(latestSize.height))
+              };
+              commitMarkdownSize(committedSize);
+            };
+
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onEnd);
+            window.addEventListener("pointercancel", onEnd);
+          }}
+        />
+      </div>
+    );
+  }
 
   const inputRows = hasParams(selectedNode)
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
@@ -1148,6 +1369,14 @@ function Toolbox({
       <button className="action-button primary" onClick={() => vscode.postMessage({ type: "importTools" })}>Import tools</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addFunction" })}>+ Function</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addCodeNode" })}>+ Code</button>
+      <button
+        className="action-button"
+        draggable
+        onDragStart={(event) => startDrag(event, { type: "addMarkdownNode" })}
+        onClick={() => vscode.postMessage({ type: "addMarkdownNode" })}
+      >
+        + Markdown
+      </button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "refresh" })}>Refresh files</button>
       {moduleFlowFunctions(model).length > 0 && (
         <details open>
@@ -1881,6 +2110,99 @@ style.textContent = `
     background:
       linear-gradient(180deg, var(--moduleflow-returnFill), transparent 42%),
       var(--moduleflow-cardBackground);
+  }
+
+  .node-card-markdown {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    background:
+      linear-gradient(180deg, rgba(215, 168, 70, 0.10), transparent 58%),
+      var(--moduleflow-cardBackground);
+  }
+
+  .markdown-preview {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    color: var(--vscode-foreground);
+    cursor: text;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .markdown-preview.empty {
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+  }
+
+  .markdown-preview h1,
+  .markdown-preview h2,
+  .markdown-preview h3,
+  .markdown-preview p,
+  .markdown-preview ul,
+  .markdown-preview pre {
+    margin: 0 0 9px;
+  }
+
+  .markdown-preview h1 {
+    font-size: 20px;
+  }
+
+  .markdown-preview h2 {
+    font-size: 17px;
+  }
+
+  .markdown-preview h3 {
+    font-size: 14px;
+  }
+
+  .markdown-preview ul {
+    padding-left: 18px;
+  }
+
+  .markdown-preview pre {
+    overflow: auto;
+    padding: 8px;
+    background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--moduleflow-cardBackground) 18%);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 5px;
+  }
+
+  .markdown-editor {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+    font-family: var(--vscode-editor-font-family, Consolas, monospace);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .markdown-properties {
+    flex: none;
+    margin-top: 10px;
+  }
+
+  .markdown-resize-handle {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 15px;
+    height: 15px;
+    cursor: nwse-resize;
+  }
+
+  .markdown-resize-handle::after {
+    content: "";
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--vscode-descriptionForeground);
+    border-bottom: 2px solid var(--vscode-descriptionForeground);
+    opacity: 0.75;
   }
 
   .node-card-input .node-title,

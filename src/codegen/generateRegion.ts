@@ -6,9 +6,12 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
   const metadataParts = [
     node.position ? `x:${Math.round(node.position.x)}` : undefined,
     node.position ? `y:${Math.round(node.position.y)}` : undefined,
+    node.size ? `w:${Math.round(node.size.width)}` : undefined,
+    node.size ? `h:${Math.round(node.size.height)}` : undefined,
     node.kind === "input" ? "kind:input" : undefined,
     node.kind === "return" ? "kind:return" : undefined,
     node.kind === "code" ? "kind:code" : undefined,
+    node.kind === "markdown" ? "kind:markdown" : undefined,
     node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined
   ].filter(Boolean);
 
@@ -25,6 +28,12 @@ function descriptionCommentFor(node: ModuleFlowNode): string | undefined {
 
 function metadataCommentsFor(node: ModuleFlowNode): string {
   return [positionCommentFor(node), descriptionCommentFor(node)].filter(Boolean).join("\n");
+}
+
+function markdownCommentsFor(node: Extract<ModuleFlowNode, { kind: "markdown" }>): string | undefined {
+  const metadataComments = metadataCommentsFor(node).replace(/^  /gm, "");
+  const markdownComment = `// @moduleflow:markdown ${node.id} ${JSON.stringify(node.markdown)}`;
+  return [metadataComments, markdownComment].filter(Boolean).join("\n");
 }
 
 function argsFor(
@@ -116,6 +125,10 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
     ? discoverFlows(nodes, controlFlow).flows.filter((flow) => flow.complete)
     : [];
   const functions = flows.map((flow) => buildFunction(flow, nodes));
+  const markdownNodes = nodes
+    .filter((node): node is Extract<ModuleFlowNode, { kind: "markdown" }> => node.kind === "markdown")
+    .map(markdownCommentsFor)
+    .filter((line): line is string => Boolean(line));
 
   if (functions.length === 0 && nodes.length > 0 && !controlFlow) {
     const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
@@ -132,6 +145,7 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
   return [
     startMarker,
     ...functions,
+    ...markdownNodes,
     endMarker
   ].join("\n\n");
 }

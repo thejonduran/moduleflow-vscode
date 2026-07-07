@@ -19,6 +19,11 @@ export type NodePosition = {
   y: number;
 };
 
+export type NodeSize = {
+  width: number;
+  height: number;
+};
+
 export type NodeMetadata = {
   description?: string;
   warning?: string;
@@ -51,6 +56,7 @@ export type ModuleFlowNode =
       label: string;
       functionName: string;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -60,6 +66,7 @@ export type ModuleFlowNode =
       label: string;
       source?: string;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -69,6 +76,17 @@ export type ModuleFlowNode =
       label: string;
       code: string;
       position?: NodePosition;
+      size?: NodeSize;
+      description?: string;
+      warning?: string;
+    }
+  | {
+      id: string;
+      kind: "markdown";
+      label: string;
+      markdown: string;
+      position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -84,6 +102,7 @@ export type ModuleFlowNode =
       variableName: string;
       async: boolean;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -95,6 +114,7 @@ export type ModuleFlowNode =
       inputMappings: InputMappings;
       variableName: string;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -109,6 +129,7 @@ export type ModuleFlowNode =
       inputMappings: InputMappings;
       variableName: string;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     }
@@ -123,6 +144,7 @@ export type ModuleFlowNode =
       variableName: string;
       async: boolean;
       position?: NodePosition;
+      size?: NodeSize;
       description?: string;
       warning?: string;
     };

@@ -6,6 +6,7 @@ import {
   addModuleFlowCall,
   addFunction,
   addCodeNode,
+  addMarkdownNode,
   deleteEdge,
   deleteFunction,
   deleteNode,
@@ -19,6 +20,8 @@ import {
   updateDescription,
   updateControlFlow,
   updateCode,
+  updateMarkdown,
+  updateNodeSize,
   updatePosition,
   updatePositions
 } from "../model/mutations";
@@ -114,6 +117,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
+    if (message?.type === "addMarkdownNode") {
+      const current = currentModel(context);
+      await addMarkdownNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
+      return;
+    }
+
     if (message?.type === "mapInput") {
       const current = currentModel(context);
       await mapInput(context.targetUri, current, message as never);
@@ -160,6 +171,20 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "updateCode") {
       const current = currentModel(context);
       await updateCode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updateMarkdown") {
+      const current = currentModel(context);
+      await updateMarkdown(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updateNodeSize") {
+      const current = currentModel(context);
+      await updateNodeSize(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       return;
     }

@@ -19,6 +19,7 @@ type Metadata = {
   };
   description?: string;
   code?: string;
+  markdown?: string;
 };
 
 export function createInitialModel(targetFile: string): ModuleFlowModel {
@@ -131,6 +132,18 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
       metadata: {
         nodeId,
         code: parseDescription(encodedCode)
+      }
+    };
+  }
+
+  const markdownMatch = /^@moduleflow:markdown\s+(\S+)\s+(.+)$/.exec(value);
+  if (markdownMatch) {
+    const [, nodeId, encodedMarkdown] = markdownMatch;
+    return {
+      nodeId,
+      metadata: {
+        nodeId,
+        markdown: parseDescription(encodedMarkdown)
       }
     };
   }
@@ -335,6 +348,47 @@ function findModuleFlowFunctions(source: string): t.FunctionDeclaration[] {
   return functions;
 }
 
+function markdownNodesFromRegion(source: string): Array<Extract<ModuleFlowNode, { kind: "markdown" }>> {
+  const comments: t.Comment[] = [];
+  const commentPattern = /^[ \t]*\/\/(.*)$/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = commentPattern.exec(source))) {
+    comments.push({
+      type: "CommentLine",
+      value: match[1]
+    } as t.Comment);
+  }
+
+  const byNodeId = metadataByNodeIdFromComments(comments);
+  const nodes: Array<Extract<ModuleFlowNode, { kind: "markdown" }>> = [];
+
+  for (const metadata of byNodeId.values()) {
+    if (metadata.kind !== "markdown") {
+      continue;
+    }
+
+    const node: Extract<ModuleFlowNode, { kind: "markdown" }> = {
+      id: metadata.nodeId ?? `markdown-${nodes.length + 1}`,
+      kind: "markdown",
+      label: "markdown",
+      markdown: metadata.markdown ?? ""
+    };
+    if (metadata.position) {
+      node.position = metadata.position;
+    }
+    if (metadata.size) {
+      node.size = metadata.size;
+    }
+    if (metadata.description) {
+      node.description = metadata.description;
+    }
+    nodes.push(node);
+  }
+
+  return nodes;
+}
+
 function moduleFlowRegion(source: string): string | undefined {
   const inspection = inspectModuleFlowRegion(source);
   if (!inspection.ok) {
@@ -355,15 +409,18 @@ export function createModelFromSource(targetFile: string, source: string, import
   if (!region) {
     return model;
   }
+  const markdownNodes = markdownNodesFromRegion(region);
 
   let functionNodes: t.FunctionDeclaration[];
   try {
     functionNodes = findModuleFlowFunctions(region);
   } catch {
+    model.nodes.push(...markdownNodes);
     return model;
   }
 
   if (functionNodes.length === 0) {
+    model.nodes = markdownNodes.length > 0 ? markdownNodes : model.nodes;
     return model;
   }
 
@@ -618,7 +675,7 @@ export function createModelFromSource(targetFile: string, source: string, import
     functionIndex += 1;
   }
 
-  model.nodes = nodes;
+  model.nodes = [...nodes, ...markdownNodes];
   model.controlFlow = controlFlow;
   return model;
 }

@@ -223,6 +223,24 @@ const replacedSafeOutsideSource = upsertRegion(safeOutsideSource, buildRegion("m
 assert.match(replacedSafeOutsideSource, /import axios from "axios";/);
 assert.match(replacedSafeOutsideSource, /function helperOutside/);
 assert.match(replacedSafeOutsideSource, /export const after = 1;/);
+const markdownNode = {
+  id: "markdown-1",
+  kind: "markdown",
+  label: "markdown",
+  markdown: "# Notes\n\nThis flow validates input.",
+  position: { x: 120, y: 640 },
+  size: { width: 400, height: 220 }
+};
+const markdownSource = buildRegion("main", [...nodes, markdownNode], [
+  { from: "input", to: "return" }
+]);
+assert.match(markdownSource, /@moduleflow:node markdown-1 x:120 y:640 w:400 h:220 kind:markdown/);
+assert.match(markdownSource, /@moduleflow:markdown markdown-1 "# Notes\\n\\nThis flow validates input\."/);
+assert.doesNotMatch(markdownSource, /export async function main\(input\) \{[\s\S]*markdown-1[\s\S]*return input;/);
+const markdownModel = createModelFromSource("main.js", markdownSource, imports);
+const parsedMarkdownNode = markdownModel.nodes.find((node) => node.id === "markdown-1");
+assert.deepEqual(parsedMarkdownNode, markdownNode);
+assert.equal(markdownModel.controlFlow.some((edge) => edge.from === "markdown-1" || edge.to === "markdown-1"), false);
 assert.equal(hasRegion('const marker = "// @moduleflow:start";'), false);
 assert.deepEqual(inspectModuleFlowRegion('const marker = "// @moduleflow:start";'), { ok: true, hasRegion: false });
 assert.throws(

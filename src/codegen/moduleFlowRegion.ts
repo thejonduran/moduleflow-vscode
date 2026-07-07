@@ -32,7 +32,7 @@ type MarkerMatch = {
   marker: string;
 };
 
-const knownMetadataPattern = /^[ \t]*\/\/[ \t]*@moduleflow:(?:start|end|node\b.*|node:end\b.*|description\b.*|code\b.*)[ \t]*$/;
+const knownMetadataPattern = /^[ \t]*\/\/[ \t]*@moduleflow:(?:start|end|node\b.*|node:end\b.*|description\b.*|code\b.*|markdown\b.*)[ \t]*$/;
 const moduleFlowCommentPattern = /^[ \t]*\/\/[ \t]*@moduleflow:\S.*$/gm;
 
 function markerMatches(source: string, marker: string): MarkerMatch[] {

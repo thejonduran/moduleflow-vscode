@@ -105,6 +105,13 @@ function setNodePosition(model: ModuleFlowModel, nodeId: string, position: { x: 
   }
 }
 
+function setNodeSize(model: ModuleFlowModel, nodeId: string, size: { width: number; height: number }): void {
+  const node = model.nodes.find((item) => item.id === nodeId);
+  if (node) {
+    node.size = size;
+  }
+}
+
 function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { variableName: string }> {
   return "variableName" in node;
 }
@@ -406,6 +413,21 @@ export async function addCodeNode(targetUri: vscode.Uri, model: ModuleFlowModel,
   await persistModel(targetUri, model);
 }
 
+export async function addMarkdownNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
+  model.nodes.push({
+    id: uniqueNodeId(model, "markdown"),
+    kind: "markdown",
+    label: "markdown",
+    markdown: "",
+    position: message.position,
+    size: {
+      width: 350,
+      height: 200
+    }
+  });
+  await persistModel(targetUri, model);
+}
+
 export async function mapInput(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; paramName: string; source: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
   if (!node || !("inputMappings" in node)) {
@@ -438,6 +460,11 @@ export async function updatePositions(
   await persistModel(targetUri, model);
 }
 
+export async function updateNodeSize(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; size: { width: number; height: number } }): Promise<void> {
+  setNodeSize(model, message.nodeId, message.size);
+  await persistModel(targetUri, model);
+}
+
 export async function updateDescription(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; description: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
   if (!node) {
@@ -456,6 +483,16 @@ export async function updateCode(targetUri: vscode.Uri, model: ModuleFlowModel, 
   }
 
   node.code = message.code;
+  await persistModel(targetUri, model);
+}
+
+export async function updateMarkdown(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; markdown: string }): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind !== "markdown") {
+    return;
+  }
+
+  node.markdown = message.markdown;
   await persistModel(targetUri, model);
 }
 
