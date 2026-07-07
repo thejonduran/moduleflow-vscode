@@ -26,7 +26,7 @@ import {
   useNodesState
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ModuleFlowModel, ModuleFlowNode } from "../types";
+import { ExportParameter, ModuleFlowModel, ModuleFlowNode } from "../types";
 import { codeDependencies } from "../graph/codeDependencies";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows, previousScopedSourceRefs, previousScopedSources } from "../graph/flowDiscovery";
@@ -110,7 +110,19 @@ function moduleFlowFunctionFor(model: ModuleFlowModel | undefined, functionNodeI
   );
 }
 
+function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }> | undefined): ExportParameter[] {
+  return node?.params?.length ? node.params : [{ name: "input", required: true }];
+}
+
+function moduleFlowCallParams(model: ModuleFlowModel | undefined, node: Extract<ModuleFlowNode, { kind: "moduleFlowCall" }>): ExportParameter[] {
+  return inputParamsFor(moduleFlowFunctionFor(model, node.functionNodeId));
+}
+
 function outputNamesForNode(node: ModuleFlowNode): string[] {
+  if (node.kind === "input") {
+    return inputParamsFor(node).map((param) => param.name);
+  }
+
   if (hasVariable(node)) {
     return [node.variableName];
   }
@@ -200,8 +212,19 @@ function sourceNodeIdFor(model: ModuleFlowModel, source: string, targetNode: Mod
     return flows.find((flow) => flow.nodes.some((node) => node.id === targetNode.id))?.input.id;
   }
 
-  return previousScopedSourceRefs(model.nodes, model.controlFlow, targetNode.id)
-    .find((scopedSource) => scopedSource.name === source)?.nodeId;
+  const scopedSource = previousScopedSourceRefs(model.nodes, model.controlFlow, targetNode.id)
+    .find((item) => item.name === source);
+  if (scopedSource) {
+    return scopedSource.nodeId;
+  }
+
+  const { flows } = discoverFlows(model.nodes, model.controlFlow);
+  const flow = flows.find((item) => item.nodes.some((node) => node.id === targetNode.id));
+  if (flow && inputParamsFor(flow.input).some((param) => param.name === source)) {
+    return flow.input.id;
+  }
+
+  return undefined;
 }
 
 function toFlowEdges(model: ModuleFlowModel): Edge[] {
@@ -318,7 +341,11 @@ function outputSources(model: ModuleFlowModel, targetNode?: ModuleFlowNode): str
 function sourceHandleFor(model: ModuleFlowModel, sourceNodeId: string, source: string): string {
   const sourceNode = model.nodes.find((item) => item.id === sourceNodeId);
   if (sourceNode?.kind === "input") {
-    return "input";
+    if (source.startsWith("input.")) {
+      return source.slice("input.".length);
+    }
+
+    return source;
   }
 
   if (sourceNode?.kind === "code") {
@@ -800,7 +827,8 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
   }
 
   if (node.kind === "moduleFlowCall") {
-    return `${moduleFlowFunctionFor(model, node.functionNodeId)?.functionName ?? "missingFunction"}(input)`;
+    const params = moduleFlowCallParams(model, node).map((param) => param.name).join(", ");
+    return `${moduleFlowFunctionFor(model, node.functionNodeId)?.functionName ?? "missingFunction"}(${params})`;
   }
 
   if (node.kind === "classInstance") {
@@ -816,7 +844,7 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
   }
 
   if (node.kind === "input") {
-    return "input";
+    return `input (${inputParamsFor(node).map((param) => param.name).join(", ")})`;
   }
 
   if (node.kind === "code") {
@@ -929,8 +957,12 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         item.kind === "input" && item.id === functionNodeId
       );
       if (node?.kind === "moduleFlowCall" && inputNode) {
+        const previousMappings = node.inputMappings;
         node.functionNodeId = functionNodeId;
         node.label = inputNode.functionName;
+        node.inputMappings = Object.fromEntries(
+          inputParamsFor(inputNode).map((param) => [param.name, previousMappings[param.name] ?? param.name])
+        );
         onModelChange(nextModel);
       }
     }
@@ -973,6 +1005,32 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       type: "updateDescription",
       nodeId: selectedNode.id,
       description
+    });
+  };
+
+  const updateFunctionInputsLocal = (params: ExportParameter[]) => {
+    if (selectedNode.kind !== "input" || params.length === 0) {
+      return;
+    }
+
+    const normalized = params.map((param) => ({
+      ...param,
+      name: param.name.trim()
+    }));
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const inputNode = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (inputNode?.kind === "input") {
+        inputNode.params = normalized;
+        onModelChange(nextModel);
+      }
+    }
+
+    vscode.postMessage({
+      type: "updateFunctionInputs",
+      nodeId: selectedNode.id,
+      params: normalized
     });
   };
 
@@ -1140,14 +1198,14 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const inputRows = hasParams(selectedNode)
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
       : selectedNode.kind === "moduleFlowCall"
-        ? [{ id: "input", label: "input" }]
+        ? moduleFlowCallParams(model, selectedNode).map((param) => ({ id: param.name, label: param.name }))
       : selectedNode.kind === "return"
         ? [{ id: "in", label: "value" }]
         : selectedNode.kind === "code"
           ? codeDependencies(selectedNode.code).map((name) => ({ id: `dependency:${name}`, label: name }))
         : [];
   const outputRows = selectedNode.kind === "input"
-    ? [{ id: "input", label: "input" }]
+    ? inputParamsFor(selectedNode).map((param) => ({ id: param.name, label: param.name }))
     : hasVariable(selectedNode)
       ? [{ id: "result", label: "return" }]
       : selectedNode.kind === "code"
@@ -1156,6 +1214,10 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code"
     ? { width: codeNodeWidth(selectedNode.code) }
     : undefined;
+  const flowInputNode = model
+    ? discoverFlows(model.nodes, model.controlFlow).flows.find((flow) => flow.nodes.some((node) => node.id === selectedNode.id))?.input
+    : undefined;
+  const scopedInputOptions = inputParamsFor(flowInputNode).map((param) => param.name);
 
   return (
     <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
@@ -1205,12 +1267,82 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
               <label key={param.name}>
                 {param.name}
                 <SourceSelect
-                  value={selectedNode.inputMappings[param.name] ?? `input.${param.name}`}
-                  options={[`input.${param.name}`, ...sources]}
+                  value={selectedNode.inputMappings[param.name] ?? param.name}
+                  options={[param.name, `input.${param.name}`, ...sources]}
                   onChange={(source) => updateInputSource(param.name, source)}
                 />
               </label>
             ))}
+          </>
+        )}
+
+        {selectedNode.kind === "input" && (
+          <>
+            <h3>Function inputs</h3>
+            <div className="function-input-list">
+              {inputParamsFor(selectedNode).map((param, index, params) => (
+                <div className="function-input-row" key={`${param.name}-${index}`}>
+                  <input
+                    aria-label={`Input ${index + 1} name`}
+                    value={param.name}
+                    onChange={(event) => {
+                      const nextParams = params.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, name: event.currentTarget.value } : item
+                      );
+                      updateFunctionInputsLocal(nextParams);
+                    }}
+                  />
+                  <button
+                    className="mini-action-button"
+                    disabled={index === 0}
+                    onClick={() => {
+                      const nextParams = [...params];
+                      [nextParams[index - 1], nextParams[index]] = [nextParams[index], nextParams[index - 1]];
+                      updateFunctionInputsLocal(nextParams);
+                    }}
+                    type="button"
+                  >
+                    Up
+                  </button>
+                  <button
+                    className="mini-action-button"
+                    disabled={index === params.length - 1}
+                    onClick={() => {
+                      const nextParams = [...params];
+                      [nextParams[index], nextParams[index + 1]] = [nextParams[index + 1], nextParams[index]];
+                      updateFunctionInputsLocal(nextParams);
+                    }}
+                    type="button"
+                  >
+                    Down
+                  </button>
+                  <button
+                    className="mini-action-button danger"
+                    disabled={params.length === 1}
+                    onClick={() => updateFunctionInputsLocal(params.filter((_item, itemIndex) => itemIndex !== index))}
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              className="action-button"
+              onClick={() => {
+                const existingNames = new Set(inputParamsFor(selectedNode).map((param) => param.name));
+                let nextName = "input";
+                let suffix = 2;
+                while (existingNames.has(nextName)) {
+                  nextName = `input${suffix}`;
+                  suffix += 1;
+                }
+                updateFunctionInputsLocal([...inputParamsFor(selectedNode), { name: nextName, required: true }]);
+              }}
+              type="button"
+            >
+              + Input
+            </button>
           </>
         )}
 
@@ -1230,14 +1362,16 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
               </select>
             </label>
             <h3>Inputs</h3>
-            <label>
-              input
-              <SourceSelect
-                value={selectedNode.inputMappings.input ?? "input"}
-                options={["input", ...sources]}
-                onChange={(source) => updateInputSource("input", source)}
-              />
-            </label>
+            {moduleFlowCallParams(model, selectedNode).map((param) => (
+              <label key={param.name}>
+                {param.name}
+                <SourceSelect
+                  value={selectedNode.inputMappings[param.name] ?? param.name}
+                  options={[param.name, ...sources]}
+                  onChange={(source) => updateInputSource(param.name, source)}
+                />
+              </label>
+            ))}
           </>
         )}
 
@@ -1246,7 +1380,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
             Return source
             <SourceSelect
               value={selectedNode.source ?? "input"}
-              options={["input", ...sources]}
+              options={[...scopedInputOptions, "input", ...sources]}
               onChange={updateReturnSource}
             />
           </label>
@@ -1682,11 +1816,7 @@ function App() {
       }
 
       const source = sourceNode.kind === "input"
-        ? targetNode.kind === "return"
-          ? "input"
-          : targetNode.kind === "moduleFlowCall" && connection.targetHandle === "input"
-            ? "input"
-          : `input.${connection.targetHandle}`
+        ? connection.sourceHandle ?? "input"
         : hasVariable(sourceNode)
           ? sourceNode.variableName
           : sourceNode.kind === "code"
@@ -2093,6 +2223,35 @@ style.textContent = `
     color: var(--vscode-button-foreground);
     background: var(--vscode-button-background);
     border-color: var(--vscode-button-background);
+  }
+
+  .function-input-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .function-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .mini-action-button {
+    width: auto;
+    min-width: 42px;
+    padding: 5px 7px;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .mini-action-button.danger {
+    margin-top: 0;
+  }
+
+  .mini-action-button:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 
   details {

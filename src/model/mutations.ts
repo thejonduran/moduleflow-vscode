@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows } from "../graph/flowDiscovery";
-import { ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
+import { ExportParameter, ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
 import { loadModelFromFile, readText, writeText } from "./loadModel";
 
 function toVariableName(raw: string): string {
@@ -67,6 +67,14 @@ function uniqueNodeId(model: ModuleFlowModel, prefix: string): string {
 
 function defaultInputMappings(params: { name: string }[]): Record<string, string> {
   return Object.fromEntries(params.map((param) => [param.name, `input.${param.name}`]));
+}
+
+function defaultDirectInputMappings(params: { name: string }[]): Record<string, string> {
+  return Object.fromEntries(params.map((param) => [param.name, param.name]));
+}
+
+function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }>): ExportParameter[] {
+  return node.params?.length > 0 ? node.params : [{ name: "input", required: true }];
 }
 
 function resultVariableBase(exportName: string): string {
@@ -360,7 +368,7 @@ export async function addModuleFlowCall(
     kind: "moduleFlowCall",
     label: inputNode.functionName,
     functionNodeId: inputNode.id,
-    inputMappings: { input: "input" },
+    inputMappings: defaultDirectInputMappings(inputParamsFor(inputNode)),
     variableName: nextVariableName(model, resultVariableBase(inputNode.functionName)),
     position: message.position
   });
@@ -379,6 +387,7 @@ export async function addFunction(targetUri: vscode.Uri, model: ModuleFlowModel,
       kind: "input",
       label: "input",
       functionName,
+      params: [{ name: "input", required: true }],
       position
     },
     {
@@ -451,6 +460,77 @@ export async function updatePositions(
     setNodePosition(model, item.nodeId, item.position);
   }
 
+  await persistModel(targetUri, model);
+}
+
+function updateExactSourceReference(model: ModuleFlowModel, oldSource: string, newSource: string, nodeIds: Set<string>): void {
+  for (const node of model.nodes) {
+    if (!nodeIds.has(node.id)) {
+      continue;
+    }
+
+    if (hasInputMappings(node)) {
+      for (const [inputName, source] of Object.entries(node.inputMappings)) {
+        if (source === oldSource) {
+          node.inputMappings[inputName] = newSource;
+        }
+      }
+    }
+
+    if (node.kind === "return" && node.source === oldSource) {
+      node.source = newSource;
+    }
+  }
+}
+
+export async function updateFunctionInputs(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { nodeId: string; params: ExportParameter[] }
+): Promise<void> {
+  const inputNode = model.nodes.find((item): item is Extract<ModuleFlowNode, { kind: "input" }> =>
+    item.kind === "input" && item.id === message.nodeId
+  );
+  if (!inputNode) {
+    return;
+  }
+
+  const params = message.params.map((param) => ({
+    name: param.name.trim(),
+    required: param.required,
+    defaultValue: param.defaultValue
+  }));
+  const names = new Set<string>();
+  if (params.length === 0 || params.some((param) => !sanitizeIdentifier(param.name) || names.has(param.name) || (names.add(param.name), false))) {
+    void vscode.window.showErrorMessage("ModuleFlow function inputs must be unique valid JavaScript identifiers.");
+    return;
+  }
+
+  const oldParams = inputParamsFor(inputNode);
+  const flow = discoverFlows(model.nodes, model.controlFlow).flows.find((item) => item.input.id === inputNode.id);
+  const flowNodeIds = new Set(flow?.nodes.map((node) => node.id) ?? []);
+
+  oldParams.forEach((oldParam, index) => {
+    const newParam = params[index];
+    if (newParam && oldParam.name !== newParam.name) {
+      updateExactSourceReference(model, oldParam.name, newParam.name, flowNodeIds);
+      updateExactSourceReference(model, `input.${oldParam.name}`, newParam.name, flowNodeIds);
+    }
+  });
+
+  for (const node of model.nodes) {
+    if (node.kind !== "moduleFlowCall" || node.functionNodeId !== inputNode.id) {
+      continue;
+    }
+
+    const previousMappings = node.inputMappings;
+    node.inputMappings = Object.fromEntries(params.map((param, index) => {
+      const oldParam = oldParams[index];
+      return [param.name, previousMappings[param.name] ?? (oldParam ? previousMappings[oldParam.name] : undefined) ?? param.name];
+    }));
+  }
+
+  inputNode.params = params;
   await persistModel(targetUri, model);
 }
 

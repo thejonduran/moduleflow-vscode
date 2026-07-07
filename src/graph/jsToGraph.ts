@@ -2,7 +2,7 @@ import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 import { inspectModuleFlowRegion } from "../codegen/moduleFlowRegion";
-import { ControlFlowEdge, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition } from "../types";
+import { ControlFlowEdge, ExportParameter, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition } from "../types";
 
 type ToolExportMatch = {
   toolModule: ImportedToolModule;
@@ -37,7 +37,8 @@ export function createInitialModel(targetFile: string): ModuleFlowModel {
         id: "input",
         kind: "input",
         label: "input",
-        functionName: "main"
+        functionName: "main",
+        params: [{ name: "input", required: true }]
       },
       {
         id: "return",
@@ -58,6 +59,26 @@ function paramsForArgs(args: string[]): { name: string; required: boolean }[] {
     name: `arg${index + 1}`,
     required: true
   }));
+}
+
+function paramsForFunction(functionNode: t.FunctionDeclaration): ExportParameter[] {
+  const params = functionNode.params.flatMap((param): ExportParameter[] => {
+    if (t.isIdentifier(param)) {
+      return [{ name: param.name, required: true }];
+    }
+
+    if (t.isAssignmentPattern(param) && t.isIdentifier(param.left)) {
+      return [{
+        name: param.left.name,
+        required: false,
+        defaultValue: generate(param.right).code
+      }];
+    }
+
+    return [];
+  });
+
+  return params.length > 0 ? params : [{ name: "input", required: true }];
 }
 
 function findImportedExport(imports: ImportedToolModule[], exportName: string): ToolExportMatch | undefined {
@@ -427,6 +448,7 @@ export function createModelFromSource(targetFile: string, source: string, import
   const nodes: ModuleFlowNode[] = [];
   const controlFlow: ControlFlowEdge[] = [];
   const inputIdByFunctionName = new Map<string, string>();
+  const paramsByFunctionName = new Map<string, ExportParameter[]>();
   functionNodes.forEach((functionNode, index) => {
     const functionName = functionNode.id?.name ?? `main${index + 1}`;
     let inputId = index === 0 ? "input" : `${functionName}-input`;
@@ -437,6 +459,7 @@ export function createModelFromSource(targetFile: string, source: string, import
       inputId = discoveredInputMetadata.nodeId;
     }
     inputIdByFunctionName.set(functionName, inputId);
+    paramsByFunctionName.set(functionName, paramsForFunction(functionNode));
   });
   let functionIndex = 0;
 
@@ -454,7 +477,8 @@ export function createModelFromSource(targetFile: string, source: string, import
       id: inputId,
       kind: "input",
       label: "input",
-      functionName
+      functionName,
+      params: paramsForFunction(functionNode)
     };
     if (discoveredInputMetadata) {
       Object.assign(inputNode, discoveredInputMetadata);
@@ -623,13 +647,14 @@ export function createModelFromSource(targetFile: string, source: string, import
         const args = expression.arguments.map((arg) => generate(arg).code);
         const moduleFlowInputId = inputIdByFunctionName.get(exportName);
         if (moduleFlowInputId) {
+          const moduleFlowParams = paramsByFunctionName.get(exportName) ?? paramsForArgs(args);
           const nodeId = currentMetadata.nodeId ?? `${functionName}-node-${nodeIndex++}`;
           parsedNodes.push({
             id: nodeId,
             kind: "moduleFlowCall",
             label: exportName,
             functionNodeId: moduleFlowInputId,
-            inputMappings: { input: args[0] ?? "input" },
+            inputMappings: mappingsFor(moduleFlowParams, args),
             variableName,
             position: currentMetadata.position,
             description: currentMetadata.description

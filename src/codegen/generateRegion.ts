@@ -43,10 +43,21 @@ function argsFor(
   return params.map((param) => inputMappings[param.name] ?? param.defaultValue ?? `input.${param.name}`).join(", ");
 }
 
+function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }>): { name: string; required: boolean; defaultValue?: string }[] {
+  return node.params?.length > 0 ? node.params : [{ name: "input", required: true }];
+}
+
 function moduleFlowFunctionName(nodes: ModuleFlowNode[], inputNodeId: string): string | undefined {
   return nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
     node.kind === "input" && node.id === inputNodeId
   )?.functionName;
+}
+
+function moduleFlowFunctionParams(nodes: ModuleFlowNode[], inputNodeId: string): { name: string; required: boolean; defaultValue?: string }[] {
+  const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+    node.kind === "input" && node.id === inputNodeId
+  );
+  return inputNode ? inputParamsFor(inputNode) : [{ name: "input", required: true }];
 }
 
 function statementFor(node: ModuleFlowNode, nodes: ModuleFlowNode[]): string | undefined {
@@ -75,7 +86,7 @@ function statementFor(node: ModuleFlowNode, nodes: ModuleFlowNode[]): string | u
     if (!functionName) {
       return undefined;
     }
-    return `${prefix}  const ${node.variableName} = await ${functionName}(${node.inputMappings.input ?? "input"});`;
+    return `${prefix}  const ${node.variableName} = await ${functionName}(${argsFor(moduleFlowFunctionParams(nodes, node.functionNodeId), node.inputMappings)});`;
   }
 
   if (node.kind === "methodCall") {
@@ -109,9 +120,10 @@ function buildFunction(flow: ReturnType<typeof discoverFlows>["flows"][number], 
   const inputMetadataComments = metadataCommentsFor(flow.input);
   const returnMetadataComments = flow.returnNode ? metadataCommentsFor(flow.returnNode) : "";
   const returnSource = flow.returnNode?.source ?? "input";
+  const params = inputParamsFor(flow.input);
 
   return [
-    `export async function ${flow.input.functionName}(input) {`,
+    `export async function ${flow.input.functionName}(${params.map((param) => param.defaultValue ? `${param.name} = ${param.defaultValue}` : param.name).join(", ")}) {`,
     ...(inputMetadataComments ? [inputMetadataComments] : []),
     ...statements,
     ...(returnMetadataComments ? [returnMetadataComments] : []),
@@ -134,7 +146,7 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
     const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
     const returnNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "return" }> => node.kind === "return");
     functions.push(buildFunction({
-      input: inputNode ?? { id: "input", kind: "input", label: "input", functionName },
+      input: inputNode ?? { id: "input", kind: "input", label: "input", functionName, params: [{ name: "input", required: true }] },
       returnNode,
       nodes,
       complete: true,

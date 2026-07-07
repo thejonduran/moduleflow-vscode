@@ -59,6 +59,7 @@ const nodes = [
     kind: "input",
     label: "input",
     functionName: "main",
+    params: [{ name: "input", required: true }],
     position: { x: 12, y: 34 },
     description: "Raw workflow input"
   },
@@ -200,7 +201,26 @@ assert.deepEqual(model.controlFlow, [
   { from: "call-1", to: "code-1" },
   { from: "code-1", to: "return" }
 ]);
-assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "return"), ["client", "result", "user", "auditedUser"]);
+assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "return"), ["input", "client", "result", "user", "auditedUser"]);
+
+const multiInputSource = [
+  "// @moduleflow:start",
+  "export async function route(origin, destination = \"Home\") {",
+  "  // @moduleflow:node route-input x:1 y:2 kind:input",
+  "  // @moduleflow:node route-return x:100 y:2 kind:return",
+  "  return destination;",
+  "}",
+  "// @moduleflow:end"
+].join("\n");
+const multiInputModel = createModelFromSource("main.js", multiInputSource, imports);
+const multiInputNode = multiInputModel.nodes.find((node) => node.id === "route-input");
+assert.equal(multiInputNode.kind, "input");
+assert.deepEqual(multiInputNode.params, [
+  { name: "origin", required: true },
+  { name: "destination", required: false, defaultValue: "\"Home\"" }
+]);
+assert.deepEqual(previousScopedSources(multiInputModel.nodes, multiInputModel.controlFlow, "route-return"), ["origin", "destination"]);
+assert.match(buildRegion("main", multiInputModel.nodes, multiInputModel.controlFlow), /export async function route\(origin, destination = "Home"\)/);
 
 const safeOutsideSource = [
   'import axios from "axios";',
@@ -309,6 +329,7 @@ const multiFunctionNodes = [
     kind: "input",
     label: "input",
     functionName: "lookupUser",
+    params: [{ name: "input", required: true }],
     position: { x: 20, y: 420 }
   },
   {
@@ -386,7 +407,8 @@ const moduleFlowCallNodes = [
     id: "input-1",
     kind: "input",
     label: "input",
-    functionName: "main"
+    functionName: "main",
+    params: [{ name: "input", required: true }]
   },
   {
     id: "module-call-1",
@@ -406,7 +428,8 @@ const moduleFlowCallNodes = [
     id: "input-2",
     kind: "input",
     label: "input",
-    functionName: "helper"
+    functionName: "helper",
+    params: [{ name: "input", required: true }]
   },
   {
     id: "return-2",
@@ -427,6 +450,66 @@ assert.equal(moduleFlowCallNode.kind, "moduleFlowCall");
 assert.equal(moduleFlowCallNode.functionNodeId, "input-2");
 assert.deepEqual(moduleFlowCallNode.inputMappings, { input: "input" });
 assert.equal(moduleFlowCallNode.variableName, "helperResult");
+
+const multiParamModuleFlowCallNodes = [
+  {
+    id: "input-main",
+    kind: "input",
+    label: "input",
+    functionName: "main",
+    params: [
+      { name: "origin", required: true },
+      { name: "destination", required: true }
+    ]
+  },
+  {
+    id: "module-call-route",
+    kind: "moduleFlowCall",
+    label: "route",
+    functionNodeId: "input-route",
+    inputMappings: {
+      origin: "origin",
+      destination: "destination"
+    },
+    variableName: "routeResult"
+  },
+  {
+    id: "return-main",
+    kind: "return",
+    label: "return",
+    source: "routeResult"
+  },
+  {
+    id: "input-route",
+    kind: "input",
+    label: "input",
+    functionName: "route",
+    params: [
+      { name: "origin", required: true },
+      { name: "destination", required: true }
+    ]
+  },
+  {
+    id: "return-route",
+    kind: "return",
+    label: "return",
+    source: "destination"
+  }
+];
+const multiParamModuleFlowCallSource = buildRegion("main", multiParamModuleFlowCallNodes, [
+  { from: "input-main", to: "module-call-route" },
+  { from: "module-call-route", to: "return-main" },
+  { from: "input-route", to: "return-route" }
+]);
+assert.match(multiParamModuleFlowCallSource, /export async function main\(origin, destination\)/);
+assert.match(multiParamModuleFlowCallSource, /const routeResult = await route\(origin, destination\);/);
+const multiParamModuleFlowCallModel = createModelFromSource("main.js", multiParamModuleFlowCallSource, []);
+const parsedMultiParamModuleFlowCall = multiParamModuleFlowCallModel.nodes.find((node) => node.id === "module-call-route");
+assert.equal(parsedMultiParamModuleFlowCall.kind, "moduleFlowCall");
+assert.deepEqual(parsedMultiParamModuleFlowCall.inputMappings, {
+  origin: "origin",
+  destination: "destination"
+});
 
 const uniqueInputReturnSource = `
 // @moduleflow:start
@@ -455,7 +538,8 @@ const duplicateCodeSourceNodes = [
     id: "input1",
     kind: "input",
     label: "input",
-    functionName: "first"
+    functionName: "first",
+    params: [{ name: "input", required: true }]
   },
   {
     id: "code1",
@@ -473,7 +557,8 @@ const duplicateCodeSourceNodes = [
     id: "input2",
     kind: "input",
     label: "input",
-    functionName: "second"
+    functionName: "second",
+    params: [{ name: "input", required: true }]
   },
   {
     id: "code2",
@@ -507,8 +592,9 @@ const duplicateCodeSourceFlow = [
   { from: "code2", to: "call2" },
   { from: "call2", to: "return2" }
 ];
-assert.deepEqual(previousScopedSources(duplicateCodeSourceNodes, duplicateCodeSourceFlow, "call2"), ["message"]);
+assert.deepEqual(previousScopedSources(duplicateCodeSourceNodes, duplicateCodeSourceFlow, "call2"), ["input", "message"]);
 assert.deepEqual(previousScopedSourceRefs(duplicateCodeSourceNodes, duplicateCodeSourceFlow, "call2"), [
+  { nodeId: "input2", name: "input" },
   { nodeId: "code2", name: "message" }
 ]);
 

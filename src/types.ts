@@ -55,6 +55,7 @@ export type ModuleFlowNode =
       kind: "input";
       label: string;
       functionName: string;
+      params: ExportParameter[];
       position?: NodePosition;
       size?: NodeSize;
       description?: string;

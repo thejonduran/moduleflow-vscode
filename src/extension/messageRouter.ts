@@ -18,6 +18,7 @@ import {
   setModuleFlowCallFunction,
   setReturnSource,
   updateDescription,
+  updateFunctionInputs,
   updateControlFlow,
   updateCode,
   updateMarkdown,
@@ -165,6 +166,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       const current = currentModel(context);
       await updateDescription(context.targetUri, current, message as never);
       context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updateFunctionInputs") {
+      const current = currentModel(context);
+      await updateFunctionInputs(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
       return;
     }
 

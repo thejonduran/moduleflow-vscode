@@ -97,6 +97,11 @@ export function previousScopedSourceRefs(
 
   const targetIndex = flow.nodes.findIndex((node) => node.id === targetNodeId);
   return flow.nodes.slice(0, targetIndex).flatMap((node) => {
+    if (node.kind === "input") {
+      return (node.params?.length ? node.params : [{ name: "input" }])
+        .map((param) => ({ nodeId: node.id, name: param.name }));
+    }
+
     if ("variableName" in node) {
       return [{ nodeId: node.id, name: node.variableName }];
     }
