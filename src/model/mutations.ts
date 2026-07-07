@@ -3,7 +3,7 @@ import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows } from "../graph/flowDiscovery";
 import { ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
-import { loadModelFromFile, moduleFlowModulePath, readText, writeText } from "./loadModel";
+import { loadModelFromFile, readText, writeText } from "./loadModel";
 
 function toVariableName(raw: string): string {
   const base = raw.replace(/^[A-Z]/, (letter) => letter.toLowerCase()).replace(/[^\w$]/g, "");
@@ -277,12 +277,6 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
       `ModuleFlow could not find ${message.exportName} from ${message.modulePath}. Available tools: ${availableExports || "none"}.`
     );
     return;
-  }
-
-  if (modulePath === moduleFlowModulePath) {
-    void vscode.window.showWarningMessage(
-      `ModuleFlow added ${toolExport.name}(). Recursive calls are allowed, but make sure the function has a terminating condition.`
-    );
   }
 
   if (message.methodName) {

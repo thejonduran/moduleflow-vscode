@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { parseExports, parseLocalFunctions, parseModuleFlowFunctions } from "../analyzer/parseExports";
+import { parseExports, parseLocalFunctions } from "../analyzer/parseExports";
 import { parseNamedImports } from "../analyzer/parseImports";
 import { buildDefaultRegion, hasRegion, upsertRegion } from "../codegen/generateRegion";
 import { upsertImports } from "../codegen/updateImports";
@@ -8,7 +8,6 @@ import { createInitialModel, createModelFromSource } from "../graph/jsToGraph";
 import { ImportedToolModule, ModuleFlowModel } from "../types";
 
 export const localModulePath = "moduleflow:local";
-export const moduleFlowModulePath = "moduleflow:generated";
 
 export async function readText(uri: vscode.Uri): Promise<string> {
   const bytes = await vscode.workspace.fs.readFile(uri);
@@ -83,27 +82,10 @@ export function readLocalToolModule(targetUri: vscode.Uri, source: string): Impo
   };
 }
 
-export function readModuleFlowToolModule(targetUri: vscode.Uri, source: string): ImportedToolModule | undefined {
-  const exports = parseModuleFlowFunctions(source);
-  if (exports.length === 0) {
-    return undefined;
-  }
-
-  return {
-    fileName: `${path.basename(targetUri.fsPath)} ModuleFlow`,
-    modulePath: moduleFlowModulePath,
-    exports
-  };
-}
-
 export async function loadModelFromFile(targetUri: vscode.Uri): Promise<ModuleFlowModel> {
   try {
     const source = await readText(targetUri);
     const imports = await readImportedToolModules(targetUri, source);
-    const moduleFlowTools = readModuleFlowToolModule(targetUri, source);
-    if (moduleFlowTools) {
-      imports.push(moduleFlowTools);
-    }
     const localTools = readLocalToolModule(targetUri, source);
     if (localTools) {
       imports.push(localTools);
