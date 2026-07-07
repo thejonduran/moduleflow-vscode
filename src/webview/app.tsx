@@ -63,6 +63,12 @@ type FlowNodeData = {
 
 type ToolDragPayload =
   | {
+      type: "addFunction";
+    }
+  | {
+      type: "addCodeNode";
+    }
+  | {
       type: "addNode";
       modulePath: string;
       exportName: string;
@@ -75,6 +81,12 @@ type ToolDragPayload =
   | {
       type: "addMarkdownNode";
     };
+
+type CanvasContextMenuState = {
+  x: number;
+  y: number;
+  position: { x: number; y: number };
+};
 
 function hasVariable(node: ModuleFlowNode): node is Extract<ModuleFlowNode, { variableName: string }> {
   return "variableName" in node;
@@ -1358,14 +1370,40 @@ function Toolbox({
 }: {
   model: ModuleFlowModel;
 }) {
+  const [collapsed, setCollapsed] = useState(true);
   const startDrag = (event: React.DragEvent, payload: ToolDragPayload) => {
     event.dataTransfer.setData("application/moduleflow", JSON.stringify(payload));
     event.dataTransfer.effectAllowed = "copy";
   };
 
+  if (collapsed) {
+    return (
+      <aside className="toolbox collapsed">
+        <button
+          aria-label="Show tools"
+          className="toolbox-toggle"
+          onClick={() => setCollapsed(false)}
+          type="button"
+        >
+          Tools
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="toolbox">
-      <h2>Tools</h2>
+      <div className="toolbox-header">
+        <h2>Tools</h2>
+        <button
+          aria-label="Hide tools"
+          className="toolbox-collapse-button"
+          onClick={() => setCollapsed(true)}
+          type="button"
+        >
+          Hide
+        </button>
+      </div>
       <button className="action-button primary" onClick={() => vscode.postMessage({ type: "importTools" })}>Import tools</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addFunction" })}>+ Function</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addCodeNode" })}>+ Code</button>
@@ -1465,6 +1503,98 @@ function Toolbox({
   );
 }
 
+function CanvasContextMenu({
+  model,
+  menu,
+  onAdd,
+  onClose
+}: {
+  model: ModuleFlowModel;
+  menu: CanvasContextMenuState;
+  onAdd: (payload: ToolDragPayload) => void;
+  onClose: () => void;
+}) {
+  const addAndClose = (payload: ToolDragPayload) => {
+    onAdd(payload);
+    onClose();
+  };
+
+  return (
+    <div
+      className="canvas-context-menu"
+      style={{ left: menu.x, top: menu.y }}
+      onContextMenu={(event) => event.preventDefault()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <div className="context-menu-title">Add node</div>
+      <button type="button" onClick={() => addAndClose({ type: "addFunction" })}>Function</button>
+      <button type="button" onClick={() => addAndClose({ type: "addCodeNode" })}>Code</button>
+      <button type="button" onClick={() => addAndClose({ type: "addMarkdownNode" })}>Markdown</button>
+
+      {moduleFlowFunctions(model).length > 0 && (
+        <>
+          <div className="context-menu-divider" />
+          <div className="context-menu-title">ModuleFlow</div>
+          {moduleFlowFunctions(model).map((inputNode) => (
+            <button
+              key={inputNode.id}
+              type="button"
+              onClick={() => addAndClose({ type: "addModuleFlowCall", functionNodeId: inputNode.id })}
+            >
+              {inputNode.functionName}(input)
+            </button>
+          ))}
+        </>
+      )}
+
+      {model.imports.length > 0 && (
+        <>
+          <div className="context-menu-divider" />
+          {model.imports.map((toolModule) => (
+            <div key={toolModule.modulePath}>
+              <div className="context-menu-title">{toolModule.fileName}</div>
+              {toolModule.exports.map((item) => (
+                <div key={item.name}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      addAndClose({
+                        type: "addNode",
+                        modulePath: toolModule.modulePath,
+                        exportName: item.name,
+                        methodName: null
+                      })
+                    }
+                  >
+                    {item.kind === "class" ? `${item.name} class` : `${item.name}(${item.params.map((param) => param.name).join(", ")})`}
+                  </button>
+                  {item.kind === "class" && item.methods.map((method) => (
+                    <button
+                      className="child"
+                      key={method.name}
+                      type="button"
+                      onClick={() =>
+                        addAndClose({
+                          type: "addNode",
+                          modulePath: toolModule.modulePath,
+                          exportName: item.name,
+                          methodName: method.name
+                        })
+                      }
+                    >
+                      {item.name}.{method.name}({method.params.map((param) => param.name).join(", ")})
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const parsedModel = JSON.parse(document.getElementById("moduleflow-data")?.textContent ?? "{}") as ModuleFlowModel;
   const [model, setModel] = useState(parsedModel);
@@ -1472,6 +1602,7 @@ function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(toFlowEdges(model));
   const [selectedEdge, setSelectedEdge] = useState<Edge | undefined>();
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | undefined>();
   const nodeTypes = useMemo(() => ({ moduleFlow: ModuleFlowCard }), []);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -1675,6 +1806,11 @@ function App() {
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && canvasContextMenu) {
+        setCanvasContextMenu(undefined);
+        return;
+      }
+
       const duplicateShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d";
       if (duplicateShortcut) {
         if (isEditableElement(event.target)) {
@@ -1716,7 +1852,30 @@ function App() {
 
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [nodes, onEdgesDelete, onNodesDelete, selectedEdge, selectedNodeIds]);
+  }, [canvasContextMenu, nodes, onEdgesDelete, onNodesDelete, selectedEdge, selectedNodeIds]);
+
+  const addNodeAtContextMenu = useCallback((payload: ToolDragPayload) => {
+    if (!canvasContextMenu) {
+      return;
+    }
+
+    vscode.postMessage({
+      ...payload,
+      position: canvasContextMenu.position
+    });
+  }, [canvasContextMenu]);
+
+  const onPaneContextMenu = useCallback((event: MouseEvent | React.MouseEvent) => {
+    event.preventDefault();
+    setCanvasContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      position: screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY
+      })
+    });
+  }, [screenToFlowPosition]);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -1763,6 +1922,8 @@ function App() {
           deleteKeyCode={["Backspace", "Delete"]}
           onDragOver={onDragOver}
           onDrop={onDrop}
+          onPaneClick={() => setCanvasContextMenu(undefined)}
+          onPaneContextMenu={onPaneContextMenu}
         >
           <Background />
           <FlowScopeOverlays
@@ -1775,6 +1936,14 @@ function App() {
           <Controls />
           <MiniMap pannable zoomable />
         </ReactFlow>
+        {canvasContextMenu && (
+          <CanvasContextMenu
+            model={model}
+            menu={canvasContextMenu}
+            onAdd={addNodeAtContextMenu}
+            onClose={() => setCanvasContextMenu(undefined)}
+          />
+        )}
       </main>
     </div>
   );
@@ -1794,20 +1963,65 @@ style.textContent = `
 
   .shell {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: auto 1fr;
     width: 100%;
     height: 100%;
   }
 
   .toolbox {
     box-sizing: border-box;
+    width: 280px;
     padding: 14px;
     overflow: auto;
     background: var(--vscode-sideBar-background);
+    border-right: 1px solid var(--vscode-panel-border);
   }
 
-  .toolbox {
-    border-right: 1px solid var(--vscode-panel-border);
+  .toolbox.collapsed {
+    width: 42px;
+    padding: 8px 6px;
+    overflow: hidden;
+  }
+
+  .toolbox-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .toolbox-header h2 {
+    margin: 0;
+  }
+
+  .toolbox-collapse-button,
+  .toolbox-toggle {
+    color: var(--vscode-descriptionForeground);
+    background: transparent;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .toolbox-collapse-button {
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+
+  .toolbox-toggle {
+    width: 28px;
+    min-height: 92px;
+    padding: 7px 4px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+  }
+
+  .toolbox-collapse-button:hover,
+  .toolbox-toggle:hover {
+    color: var(--vscode-foreground);
+    border-color: var(--vscode-focusBorder);
   }
 
   h2 {
@@ -2086,6 +2300,61 @@ style.textContent = `
   .react-flow__minimap-node {
     fill: color-mix(in srgb, var(--vscode-descriptionForeground) 52%, var(--moduleflow-cardBackground) 48%);
     stroke: transparent;
+  }
+
+  .canvas-context-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 220px;
+    max-width: 320px;
+    max-height: min(520px, calc(100vh - 24px));
+    overflow: auto;
+    padding: 6px;
+    color: var(--vscode-foreground);
+    background: var(--moduleflow-cardBackground);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.32);
+  }
+
+  .canvas-context-menu button {
+    display: block;
+    width: 100%;
+    padding: 6px 8px;
+    overflow: hidden;
+    color: var(--vscode-foreground);
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .canvas-context-menu button:hover {
+    background: color-mix(in srgb, var(--moduleflow-cardBackground) 72%, var(--vscode-focusBorder) 28%);
+  }
+
+  .canvas-context-menu button.child {
+    padding-left: 20px;
+    color: var(--vscode-descriptionForeground);
+  }
+
+  .context-menu-title {
+    padding: 5px 8px 4px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .context-menu-divider {
+    height: 1px;
+    margin: 6px 0;
+    background: var(--vscode-panel-border);
   }
 
   .node-card {
