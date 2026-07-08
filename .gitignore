@@ -3,5 +3,5 @@ out/
 media/
 sample/
 *.vsix
-!moduleflow-vscode-0.0.1.vsix
+!moduleflow-vscode-1.0.0.vsix
 *.log

@@ -9,7 +9,6 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
     node.size ? `w:${Math.round(node.size.width)}` : undefined,
     node.size ? `h:${Math.round(node.size.height)}` : undefined,
     node.kind === "input" ? "kind:input" : undefined,
-    node.kind === "return" ? "kind:return" : undefined,
     node.kind === "code" ? "kind:code" : undefined,
     node.kind === "markdown" ? "kind:markdown" : undefined,
     node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined
@@ -101,7 +100,6 @@ export function buildDefaultRegion(functionName: string): string {
   return [
     startMarker,
     `export async function ${functionName}(input) {`,
-    "  return input;",
     "}",
     endMarker
   ].join("\n");
@@ -113,21 +111,18 @@ export function hasRegion(source: string): boolean {
 }
 
 function buildFunction(flow: ReturnType<typeof discoverFlows>["flows"][number], nodes: ModuleFlowNode[]): string {
-  const bodyNodes = flow.nodes.slice(1, -1);
+  const bodyNodes = flow.nodes.slice(1);
   const statements = bodyNodes
     .map((node) => statementFor(node, nodes))
     .filter((line): line is string => Boolean(line));
   const inputMetadataComments = metadataCommentsFor(flow.input);
-  const returnMetadataComments = flow.returnNode ? metadataCommentsFor(flow.returnNode) : "";
-  const returnSource = flow.returnNode?.source ?? "input";
   const params = inputParamsFor(flow.input);
 
   return [
     `export async function ${flow.input.functionName}(${params.map((param) => param.defaultValue ? `${param.name} = ${param.defaultValue}` : param.name).join(", ")}) {`,
     ...(inputMetadataComments ? [inputMetadataComments] : []),
     ...statements,
-    ...(returnMetadataComments ? [returnMetadataComments] : []),
-    `  return ${returnSource};`,
+    ...(flow.input.returnSource ? [`  return ${flow.input.returnSource};`] : []),
     "}"
   ].join("\n");
 }
@@ -147,10 +142,8 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
 
   if (functions.length === 0 && nodes.length > 0 && !controlFlow) {
     const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
-    const returnNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "return" }> => node.kind === "return");
     functions.push(buildFunction({
       input: inputNode ?? { id: "input", kind: "input", label: "input", functionName, params: [{ name: "input", required: true }] },
-      returnNode,
       nodes,
       complete: true,
       errors: []

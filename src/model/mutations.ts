@@ -99,13 +99,6 @@ function findUniqueToolExport(model: ModuleFlowModel, exportName: string): { mod
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-function updateReturn(model: ModuleFlowModel, returnNodeId: string, source: string): void {
-  const returnNode = model.nodes.find((node) => node.id === returnNodeId);
-  if (returnNode?.kind === "return") {
-    returnNode.source = source;
-  }
-}
-
 function setNodePosition(model: ModuleFlowModel, nodeId: string, position: { x: number; y: number }): void {
   const node = model.nodes.find((item) => item.id === nodeId);
   if (node) {
@@ -150,8 +143,8 @@ function replaceSourceReferences(model: ModuleFlowModel, oldSource: string, newS
   }
 
   for (const node of model.nodes) {
-    if (node.kind === "return" && node.source === oldSource) {
-      node.source = newSource;
+    if (node.kind === "input" && node.returnSource === oldSource) {
+      node.returnSource = newSource;
     }
   }
 }
@@ -169,8 +162,8 @@ function removeReferencesToSource(model: ModuleFlowModel, source: string): void 
   }
 
   for (const node of model.nodes) {
-    if (node.kind === "return" && node.source === source) {
-      node.source = "input";
+    if (node.kind === "input" && node.returnSource === source) {
+      node.returnSource = undefined;
     }
   }
 }
@@ -300,7 +293,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
     }
 
     const variableName = nextVariableName(model, toVariableName(method.name === "get" ? "result" : method.name));
-    model.nodes.splice(model.nodes.length - 1, 0, {
+    model.nodes.push({
       id: uniqueNodeId(model, "node"),
       kind: "methodCall",
       label: `${instanceNode.variableName}.${method.name}`,
@@ -318,7 +311,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
 
   if (toolExport.kind === "class") {
     const variableName = nextVariableName(model, toVariableName(toolExport.name));
-    model.nodes.splice(model.nodes.length - 1, 0, {
+    model.nodes.push({
       id: uniqueNodeId(model, "node"),
       kind: "classInstance",
       label: `new ${toolExport.name}`,
@@ -335,7 +328,7 @@ export async function addNode(targetUri: vscode.Uri, model: ModuleFlowModel, mes
   }
 
   const variableName = nextVariableName(model, resultVariableBase(toolExport.name));
-  model.nodes.splice(model.nodes.length - 1, 0, {
+  model.nodes.push({
     id: uniqueNodeId(model, "node"),
     kind: "call",
     label: toolExport.name,
@@ -363,7 +356,7 @@ export async function addModuleFlowCall(
     return;
   }
 
-  model.nodes.splice(model.nodes.length - 1, 0, {
+  model.nodes.push({
     id: uniqueNodeId(model, "node"),
     kind: "moduleFlowCall",
     label: inputNode.functionName,
@@ -378,30 +371,17 @@ export async function addModuleFlowCall(
 export async function addFunction(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
   const functionName = nextFunctionName(model, "main");
   const inputId = uniqueNodeId(model, "input");
-  const returnId = uniqueNodeId(model, "return");
   const position = message.position ?? { x: 80, y: 120 + model.nodes.length * 40 };
 
-  model.nodes.push(
-    {
-      id: inputId,
-      kind: "input",
-      label: "input",
-      functionName,
-      params: [{ name: "input", required: true }],
-      position
-    },
-    {
-      id: returnId,
-      kind: "return",
-      label: "return",
-      source: "input",
-      position: {
-        x: position.x + 540,
-        y: position.y
-      }
-    }
-  );
-  model.controlFlow.push({ from: inputId, to: returnId });
+  model.nodes.push({
+    id: inputId,
+    kind: "input",
+    label: "input",
+    functionName,
+    params: [{ name: "input", required: true }],
+    returnSource: "input",
+    position
+  });
   await persistModel(targetUri, model);
 }
 
@@ -441,8 +421,13 @@ export async function mapInput(targetUri: vscode.Uri, model: ModuleFlowModel, me
   await persistModel(targetUri, model);
 }
 
-export async function setReturnSource(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; source: string }): Promise<void> {
-  updateReturn(model, message.nodeId, message.source);
+export async function setFunctionReturnSource(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; source?: string }): Promise<void> {
+  const inputNode = model.nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+    node.kind === "input" && node.id === message.nodeId
+  );
+  if (inputNode) {
+    inputNode.returnSource = message.source || undefined;
+  }
   await persistModel(targetUri, model);
 }
 
@@ -477,8 +462,8 @@ function updateExactSourceReference(model: ModuleFlowModel, oldSource: string, n
       }
     }
 
-    if (node.kind === "return" && node.source === oldSource) {
-      node.source = newSource;
+    if (node.kind === "input" && node.returnSource === oldSource) {
+      node.returnSource = newSource;
     }
   }
 }
@@ -604,7 +589,7 @@ export async function updateMarkdown(targetUri: vscode.Uri, model: ModuleFlowMod
 
 export async function deleteNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
-  if (!node || node.kind === "input" || node.kind === "return") {
+  if (!node || node.kind === "input") {
     return;
   }
 
@@ -636,7 +621,7 @@ export async function deleteNode(targetUri: vscode.Uri, model: ModuleFlowModel, 
 
 export async function duplicateNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
-  if (!node || node.kind === "input" || node.kind === "return") {
+  if (!node || node.kind === "input") {
     return;
   }
 
@@ -684,13 +669,6 @@ export async function deleteFunction(targetUri: vscode.Uri, model: ModuleFlowMod
 export async function deleteEdge(targetUri: vscode.Uri, model: ModuleFlowModel, message: { source?: string; target: string; targetHandle?: string | null }): Promise<void> {
   if (message.targetHandle === "control-in" && message.source) {
     await deleteControlFlowEdge(targetUri, model, { from: message.source, to: message.target });
-    return;
-  }
-
-  const targetNode = model.nodes.find((node) => node.id === message.target);
-  if (targetNode?.kind === "return") {
-    updateReturn(model, targetNode.id, "input");
-    await persistModel(targetUri, model);
     return;
   }
 

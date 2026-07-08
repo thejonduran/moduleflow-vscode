@@ -2,7 +2,7 @@
   "name": "moduleflow-vscode",
   "displayName": "ModuleFlow",
   "description": "A visual module orchestrator for composing JavaScript exports directly into an editable JavaScript file.",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "publisher": "local-dev",
   "license": "MIT",
   "repository": {

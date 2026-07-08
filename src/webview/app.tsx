@@ -143,10 +143,6 @@ function nodePosition(node: ModuleFlowNode, index: number) {
     return { x: 80, y: 120 };
   }
 
-  if (node.kind === "return") {
-    return { x: 620, y: 120 };
-  }
-
   return { x: 240 + index * 210, y: 120 };
 }
 
@@ -275,31 +271,6 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
     }
   }
 
-  for (const returnNode of model.nodes.filter((node): node is Extract<ModuleFlowNode, { kind: "return" }> => node.kind === "return")) {
-    if (!returnNode.source) {
-      continue;
-    }
-    const sourceNodeId = sourceNodeIdFor(model, returnNode.source, returnNode);
-    if (sourceNodeId) {
-      edges.push({
-        id: `data:${sourceNodeId}:${returnNode.source}->${returnNode.id}`,
-        source: sourceNodeId,
-        sourceHandle: sourceHandleFor(model, sourceNodeId, returnNode.source),
-        target: returnNode.id,
-        targetHandle: "in",
-        style: {
-          strokeWidth: 1.6,
-          stroke: "var(--moduleflow-dataEdge)"
-        },
-        data: {
-          kind: "data",
-          target: returnNode.id,
-          targetHandle: "in"
-        }
-      });
-    }
-  }
-
   for (const codeNode of model.nodes.filter((node): node is Extract<ModuleFlowNode, { kind: "code" }> => node.kind === "code")) {
     for (const dependency of codeDependencies(codeNode.code)) {
       const sourceNodeId = sourceNodeIdFor(model, dependency, codeNode);
@@ -328,6 +299,22 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
   }
 
   return edges;
+}
+
+function functionReturnOptions(model: ModuleFlowModel | undefined, inputNode: Extract<ModuleFlowNode, { kind: "input" }>): string[] {
+  if (!model) {
+    return inputParamsFor(inputNode).map((param) => param.name);
+  }
+
+  const flow = discoverFlows(model.nodes, model.controlFlow).flows.find((item) => item.input.id === inputNode.id);
+  const flowOutputs = flow
+    ? flow.nodes.slice(1).flatMap(outputNamesForNode)
+    : [];
+
+  return uniqueOptions([
+    ...inputParamsFor(inputNode).map((param) => param.name),
+    ...flowOutputs
+  ]);
 }
 
 function outputSources(model: ModuleFlowModel, targetNode?: ModuleFlowNode): string[] {
@@ -601,10 +588,12 @@ function isEditableElement(target: EventTarget | null): boolean {
 function SourceSelect({
   value,
   options,
+  labels,
   onChange
 }: {
   value: string;
   options: string[];
+  labels?: Record<string, string>;
   onChange: (source: string) => void;
 }) {
   const selectOptions = uniqueOptions([value, ...options]);
@@ -613,7 +602,7 @@ function SourceSelect({
     <select value={value} onChange={(event) => onChange(event.currentTarget.value)}>
       {selectOptions.map((option) => (
         <option value={option} key={option}>
-          {option}
+          {labels?.[option] ?? option}
         </option>
       ))}
     </select>
@@ -810,10 +799,6 @@ function nodeTitle(node: ModuleFlowNode): string {
     return node.variableName;
   }
 
-  if (node.kind === "return") {
-    return "return";
-  }
-
   if (node.kind === "code") {
     return "code";
   }
@@ -837,10 +822,6 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
 
   if (node.kind === "methodCall") {
     return `${node.instanceVariableName}.${node.methodName}(${node.params.map((param) => param.name).join(", ")})`;
-  }
-
-  if (node.kind === "return") {
-    return node.source ? `returns ${node.source}` : "returns input";
   }
 
   if (node.kind === "input") {
@@ -891,8 +872,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           candidate.instanceVariableName = nextName;
           candidate.label = `${nextName}.${candidate.methodName}`;
         }
-        if (candidate.kind === "return" && candidate.source === oldName) {
-          candidate.source = nextName;
+        if (candidate.kind === "input" && candidate.returnSource === oldName) {
+          candidate.returnSource = nextName;
         }
       }
         onModelChange(nextModel);
@@ -974,18 +955,22 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     });
   };
 
-  const updateReturnSource = (source: string) => {
+  const updateFunctionReturnSource = (source: string) => {
+    if (selectedNode.kind !== "input") {
+      return;
+    }
+
     if (model && onModelChange) {
       const nextModel = cloneModel(model);
       const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
-      if (node?.kind === "return") {
-        node.source = source;
+      if (node?.kind === "input") {
+        node.returnSource = source || undefined;
         onModelChange(nextModel);
       }
     }
 
     vscode.postMessage({
-      type: "setReturn",
+      type: "setFunctionReturn",
       nodeId: selectedNode.id,
       source
     });
@@ -1223,8 +1208,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       ? selectedNode.params.map((param) => ({ id: param.name, label: param.name }))
       : selectedNode.kind === "moduleFlowCall"
         ? moduleFlowCallParams(model, selectedNode).map((param) => ({ id: param.name, label: param.name }))
-      : selectedNode.kind === "return"
-        ? [{ id: "in", label: "value" }]
         : selectedNode.kind === "code"
           ? codeDependencies(selectedNode.code).map((name) => ({ id: `dependency:${name}`, label: name }))
         : [];
@@ -1245,7 +1228,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
   return (
     <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
-      {!hasVariable(selectedNode) && !["input", "code", "return"].includes(selectedNode.kind) && (
+      {!hasVariable(selectedNode) && !["input", "code"].includes(selectedNode.kind) && (
         <div className="node-title-label">{selectedNode.kind}</div>
       )}
       {hasVariable(selectedNode) ? (
@@ -1374,6 +1357,15 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
             >
               + Input
             </button>
+            <label>
+              Return
+              <SourceSelect
+                value={selectedNode.returnSource ?? ""}
+                options={["", ...functionReturnOptions(model, selectedNode)]}
+                labels={{ "": "none" }}
+                onChange={updateFunctionReturnSource}
+              />
+            </label>
             {inputParamsFor(selectedNode).length === 0 && (
               <label className="checkbox-label">
                 <input
@@ -1416,17 +1408,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           </>
         )}
 
-        {selectedNode.kind === "return" && (
-          <label>
-            Return source
-            <SourceSelect
-              value={selectedNode.source ?? "input"}
-              options={[...scopedInputOptions, "input", ...sources]}
-              onChange={updateReturnSource}
-            />
-          </label>
-        )}
-
         {selectedNode.kind === "input" && (
           <button
             className="action-button danger"
@@ -1441,7 +1422,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           </button>
         )}
 
-        {selectedNode.kind !== "input" && selectedNode.kind !== "return" && (
+        {selectedNode.kind !== "input" && (
           <>
             <button
               className="action-button"
@@ -1501,9 +1482,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         {selectedNode.kind !== "input" && (
           <Handle id="control-in" type="target" position={Position.Left} className="control-handle control-in-handle" />
         )}
-        {selectedNode.kind !== "return" && (
-          <Handle id="control-out" type="source" position={Position.Right} className="control-handle control-out-handle" />
-        )}
+        <Handle id="control-out" type="source" position={Position.Right} className="control-handle control-out-handle" />
       </div>
     </div>
   );
@@ -1872,21 +1851,14 @@ function App() {
       }
 
       const nextModel = cloneModel(model);
-      if (targetNode.kind === "return") {
-        const returnNode = nextModel.nodes.find((node) => node.id === connection.target);
-        if (returnNode?.kind === "return") {
-          returnNode.source = source;
-        }
-      } else {
-        const nextTargetNode = nextModel.nodes.find((node) => node.id === connection.target);
-        if (nextTargetNode && hasInputMappings(nextTargetNode)) {
-          nextTargetNode.inputMappings[connection.targetHandle] = source;
-        }
+      const nextTargetNode = nextModel.nodes.find((node) => node.id === connection.target);
+      if (nextTargetNode && hasInputMappings(nextTargetNode)) {
+        nextTargetNode.inputMappings[connection.targetHandle] = source;
       }
       applyModel(nextModel);
 
       vscode.postMessage({
-        type: targetNode.kind === "return" ? "setReturn" : "mapInput",
+        type: "mapInput",
         nodeId: connection.target,
         paramName: connection.targetHandle,
         source
@@ -2353,8 +2325,6 @@ style.textContent = `
     --moduleflow-flowEdge: #d7a846;
     --moduleflow-inputAccent: #58c77a;
     --moduleflow-inputFill: rgba(88, 199, 122, 0.08);
-    --moduleflow-returnAccent: #e05f5f;
-    --moduleflow-returnFill: rgba(224, 95, 95, 0.08);
     --moduleflow-scopeFill: rgba(215, 168, 70, 0.055);
     --moduleflow-scopeBorder: rgba(215, 168, 70, 0.42);
     --moduleflow-footerPortInset: 16px;
@@ -2589,13 +2559,6 @@ style.textContent = `
       var(--moduleflow-cardBackground);
   }
 
-  .node-card-return {
-    border-color: color-mix(in srgb, var(--moduleflow-returnAccent) 68%, var(--moduleflow-cardBorder) 32%);
-    background:
-      linear-gradient(180deg, var(--moduleflow-returnFill), transparent 42%),
-      var(--moduleflow-cardBackground);
-  }
-
   .node-card-markdown {
     position: relative;
     display: flex;
@@ -2695,18 +2658,9 @@ style.textContent = `
     color: var(--moduleflow-inputAccent);
   }
 
-  .node-card-return .node-title,
-  .node-card-return .section-label {
-    color: var(--moduleflow-returnAccent);
-  }
-
   .node-card-input .input-handle,
   .node-card-input .output-handle {
     background: var(--moduleflow-inputAccent);
-  }
-
-  .node-card-return .input-handle {
-    background: var(--moduleflow-returnAccent);
   }
 
   .react-flow__node.selected .node-card {

@@ -56,17 +56,8 @@ export type ModuleFlowNode =
       label: string;
       functionName: string;
       params: ExportParameter[];
+      returnSource?: string;
       execute?: boolean;
-      position?: NodePosition;
-      size?: NodeSize;
-      description?: string;
-      warning?: string;
-    }
-  | {
-      id: string;
-      kind: "return";
-      label: string;
-      source?: string;
       position?: NodePosition;
       size?: NodeSize;
       description?: string;

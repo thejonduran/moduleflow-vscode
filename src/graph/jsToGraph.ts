@@ -26,25 +26,15 @@ export function createInitialModel(targetFile: string): ModuleFlowModel {
   return {
     targetFile,
     imports: [],
-    controlFlow: [
-      {
-        from: "input",
-        to: "return"
-      }
-    ],
+    controlFlow: [],
     nodes: [
       {
         id: "input",
         kind: "input",
         label: "input",
         functionName: "main",
-        params: [{ name: "input", required: true }]
-      },
-      {
-        id: "return",
-        kind: "return",
-        label: "return",
-        source: "input"
+        params: [{ name: "input", required: true }],
+        returnSource: "input"
       }
     ]
   };
@@ -518,8 +508,6 @@ export function createModelFromSource(targetFile: string, source: string, import
 
     const instanceClasses = new Map<string, string>();
     const statementNodeIds: string[] = [];
-    let returnSource = "input";
-    let returnMetadata: Metadata = {};
     let nodeIndex = 1;
 
     for (let statementIndex = 0; statementIndex < functionNode.body.body.length; statementIndex += 1) {
@@ -574,11 +562,7 @@ export function createModelFromSource(targetFile: string, source: string, import
 
       if (t.isReturnStatement(statement)) {
         if (statement.argument) {
-          returnSource = generate(statement.argument).code;
-        }
-        returnMetadata = metadata.current ?? {};
-        if (returnMetadata.nodeId) {
-          returnId = returnMetadata.nodeId;
+          inputNode.returnSource = generate(statement.argument).code;
         }
         continue;
       }
@@ -716,16 +700,7 @@ export function createModelFromSource(targetFile: string, source: string, import
     }
 
     nodes.push(inputNode, ...parsedNodes);
-    const returnNode: ModuleFlowNode = {
-      id: returnId,
-      kind: "return",
-      label: "return",
-      source: returnSource,
-      position: returnMetadata.position,
-      description: returnMetadata.description
-    };
-    nodes.push(returnNode);
-    flowNodeIds.push(inputId, ...statementNodeIds, returnId);
+    flowNodeIds.push(inputId, ...statementNodeIds);
     controlFlow.push(...flowNodeIds.slice(0, -1).map((from, index) => ({ from, to: flowNodeIds[index + 1] })));
     functionIndex += 1;
   }

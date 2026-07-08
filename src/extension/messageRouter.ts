@@ -16,7 +16,7 @@ import {
   renameFunction,
   setInputExpression,
   setModuleFlowCallFunction,
-  setReturnSource,
+  setFunctionReturnSource,
   updateDescription,
   updateFunctionExecute,
   updateFunctionInputs,
@@ -134,9 +134,9 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
-    if (message?.type === "setReturn") {
+    if (message?.type === "setFunctionReturn") {
       const current = currentModel(context);
-      await setReturnSource(context.targetUri, current, message as never);
+      await setFunctionReturnSource(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       return;
     }

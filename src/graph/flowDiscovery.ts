@@ -3,7 +3,6 @@ import { codeOutputs } from "./codeOutputs";
 
 export type DiscoveredFlow = {
   input: Extract<ModuleFlowNode, { kind: "input" }>;
-  returnNode?: Extract<ModuleFlowNode, { kind: "return" }>;
   nodes: ModuleFlowNode[];
   complete: boolean;
   errors: string[];
@@ -29,7 +28,6 @@ export function discoverFlows(nodes: ModuleFlowNode[], controlFlow: ControlFlowE
     const flowNodes: ModuleFlowNode[] = [input];
     const errors: string[] = [];
     const seen = new Set<string>([input.id]);
-    let returnNode: Extract<ModuleFlowNode, { kind: "return" }> | undefined;
     let currentId = nextByFrom.get(input.id);
 
     ownerByNodeId.set(input.id, input.id);
@@ -56,19 +54,13 @@ export function discoverFlows(nodes: ModuleFlowNode[], controlFlow: ControlFlowE
 
       flowNodes.push(node);
 
-      if (node.kind === "return") {
-        returnNode = node;
-        break;
-      }
-
       currentId = nextByFrom.get(node.id);
     }
 
     flows.push({
       input,
-      returnNode,
       nodes: flowNodes,
-      complete: Boolean(returnNode) && errors.length === 0,
+      complete: errors.length === 0,
       errors
     });
   }

@@ -60,6 +60,7 @@ const nodes = [
     label: "input",
     functionName: "main",
     params: [{ name: "input", required: true }],
+    returnSource: "user",
     position: { x: 12, y: 34 },
     description: "Raw workflow input"
   },
@@ -110,14 +111,6 @@ const nodes = [
     code: "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);",
     position: { x: 640, y: 260 },
     description: "Side effect block"
-  },
-  {
-    id: "return",
-    kind: "return",
-    label: "return",
-    source: "user",
-    position: { x: 760, y: 140 },
-    description: "Export composed user"
   }
 ];
 
@@ -127,11 +120,12 @@ assert.match(source, /@moduleflow:node:end code-1/);
 assert.doesNotMatch(source, /@moduleflow:code code-1/);
 const model = createModelFromSource("main.js", source, imports);
 
-assert.equal(model.nodes.length, 6);
+assert.equal(model.nodes.length, 5);
 
-const [input, client, method, call, codeNode, returnNode] = model.nodes;
+const [input, client, method, call, codeNode] = model.nodes;
 assert.deepEqual(input.position, { x: 12, y: 34 });
 assert.equal(input.description, "Raw workflow input");
+assert.equal(input.returnSource, "user");
 
 assert.equal(client.kind, "classInstance");
 assert.equal(client.exportName, "ApiClient");
@@ -190,24 +184,18 @@ assert.deepEqual(
   ["people"]
 );
 
-assert.equal(returnNode.kind, "return");
-assert.equal(returnNode.source, "user");
-assert.deepEqual(returnNode.position, { x: 760, y: 140 });
-assert.equal(returnNode.description, "Export composed user");
 assert.deepEqual(model.controlFlow, [
   { from: "input", to: "client-1" },
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
   { from: "call-1", to: "code-1" },
-  { from: "code-1", to: "return" }
 ]);
-assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "return"), ["input", "client", "result", "user", "auditedUser"]);
+assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "code-1"), ["input", "client", "result", "user"]);
 
 const multiInputSource = [
   "// @moduleflow:start",
   "export async function route(origin, destination = \"Home\") {",
   "  // @moduleflow:node route-input x:1 y:2 kind:input",
-  "  // @moduleflow:node route-return x:100 y:2 kind:return",
   "  return destination;",
   "}",
   "// @moduleflow:end"
@@ -219,7 +207,7 @@ assert.deepEqual(multiInputNode.params, [
   { name: "origin", required: true },
   { name: "destination", required: false, defaultValue: "\"Home\"" }
 ]);
-assert.deepEqual(previousScopedSources(multiInputModel.nodes, multiInputModel.controlFlow, "route-return"), ["origin", "destination"]);
+assert.equal(multiInputNode.returnSource, "destination");
 assert.match(buildRegion("main", multiInputModel.nodes, multiInputModel.controlFlow), /export async function route\(origin, destination = "Home"\)/);
 
 const safeOutsideSource = [
@@ -302,7 +290,7 @@ const leadingBlankRegionSource = [
   ""
 ].join("\n");
 const rewrittenLeadingBlankRegionSource = upsertRegion(leadingBlankRegionSource, buildRegion("main", nodes, [
-  { from: "input", to: "return" }
+  { from: "input", to: "client-1" }
 ]));
 assert.equal((rewrittenLeadingBlankRegionSource.match(/@moduleflow:start/g) ?? []).length, 1);
 assert.equal((rewrittenLeadingBlankRegionSource.match(/@moduleflow:end/g) ?? []).length, 1);
@@ -310,7 +298,6 @@ assert.equal((rewrittenLeadingBlankRegionSource.match(/@moduleflow:end/g) ?? [])
 const reorderedSource = buildRegion("main", nodes, [
   { from: "input", to: "call-1" },
   { from: "call-1", to: "client-1" },
-  { from: "client-1", to: "return" }
 ]);
 assert.match(reorderedSource, /const user = getUser\(result\);\s+\/\/ @moduleflow:node client-1/s);
 assert.doesNotMatch(reorderedSource, /await client\.get/);
@@ -318,9 +305,9 @@ assert.doesNotMatch(reorderedSource, /await client\.get/);
 const incompleteControlSource = buildRegion("main", nodes, [
   { from: "input", to: "client-1" }
 ]);
-assert.doesNotMatch(incompleteControlSource, /const client = new ApiClient\(input\.baseUrl\);/);
-assert.doesNotMatch(incompleteControlSource, /export async function main/);
-assert.doesNotMatch(incompleteControlSource, /return user;/);
+assert.match(incompleteControlSource, /const client = new ApiClient\(input\.baseUrl\);/);
+assert.match(incompleteControlSource, /export async function main/);
+assert.match(incompleteControlSource, /return user;/);
 
 const multiFunctionNodes = [
   ...nodes,
@@ -330,6 +317,7 @@ const multiFunctionNodes = [
     label: "input",
     functionName: "lookupUser",
     params: [{ name: "input", required: true }],
+    returnSource: "lookup",
     position: { x: 20, y: 420 }
   },
   {
@@ -344,13 +332,6 @@ const multiFunctionNodes = [
     variableName: "lookup",
     async: false,
     position: { x: 260, y: 420 }
-  },
-  {
-    id: "lookup-return",
-    kind: "return",
-    label: "return",
-    source: "lookup",
-    position: { x: 500, y: 420 }
   },
   {
     id: "draft-node",
@@ -376,9 +357,7 @@ const multiFunctionSource = buildRegion("main", multiFunctionNodes, [
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
   { from: "call-1", to: "code-1" },
-  { from: "code-1", to: "return" },
   { from: "lookup-input", to: "lookup-call" },
-  { from: "lookup-call", to: "lookup-return" }
 ]);
 assert.match(multiFunctionSource, /export async function main\(input\)/);
 assert.match(multiFunctionSource, /export async function lookupUser\(input\)/);
@@ -387,11 +366,10 @@ const multiFunctionModel = createModelFromSource("main.js", multiFunctionSource,
 assert.deepEqual(
   multiFunctionModel.controlFlow.filter((edge) => edge.from.startsWith("lookup") || edge.to.startsWith("lookup")),
   [
-    { from: "lookup-input", to: "lookup-call" },
-    { from: "lookup-call", to: "lookup-return" }
+    { from: "lookup-input", to: "lookup-call" }
   ]
 );
-const withoutLookupNodes = multiFunctionModel.nodes.filter((node) => !["lookup-input", "lookup-call", "lookup-return"].includes(node.id));
+const withoutLookupNodes = multiFunctionModel.nodes.filter((node) => !["lookup-input", "lookup-call"].includes(node.id));
 const withoutLookupControlFlow = multiFunctionModel.controlFlow.filter(
   (edge) => !edge.from.startsWith("lookup") && !edge.to.startsWith("lookup")
 );
@@ -408,7 +386,8 @@ const moduleFlowCallNodes = [
     kind: "input",
     label: "input",
     functionName: "main",
-    params: [{ name: "input", required: true }]
+    params: [{ name: "input", required: true }],
+    returnSource: "helperResult"
   },
   {
     id: "module-call-1",
@@ -419,29 +398,16 @@ const moduleFlowCallNodes = [
     variableName: "helperResult"
   },
   {
-    id: "return-1",
-    kind: "return",
-    label: "return",
-    source: "helperResult"
-  },
-  {
     id: "input-2",
     kind: "input",
     label: "input",
     functionName: "helper",
-    params: [{ name: "input", required: true }]
-  },
-  {
-    id: "return-2",
-    kind: "return",
-    label: "return",
-    source: "input"
+    params: [{ name: "input", required: true }],
+    returnSource: "input"
   }
 ];
 const moduleFlowCallSource = buildRegion("main", moduleFlowCallNodes, [
   { from: "input-1", to: "module-call-1" },
-  { from: "module-call-1", to: "return-1" },
-  { from: "input-2", to: "return-2" }
 ]);
 assert.match(moduleFlowCallSource, /const helperResult = await helper\(input\);/);
 const moduleFlowCallModel = createModelFromSource("main.js", moduleFlowCallSource, []);
@@ -460,7 +426,8 @@ const multiParamModuleFlowCallNodes = [
     params: [
       { name: "origin", required: true },
       { name: "destination", required: true }
-    ]
+    ],
+    returnSource: "routeResult"
   },
   {
     id: "module-call-route",
@@ -474,12 +441,6 @@ const multiParamModuleFlowCallNodes = [
     variableName: "routeResult"
   },
   {
-    id: "return-main",
-    kind: "return",
-    label: "return",
-    source: "routeResult"
-  },
-  {
     id: "input-route",
     kind: "input",
     label: "input",
@@ -487,19 +448,12 @@ const multiParamModuleFlowCallNodes = [
     params: [
       { name: "origin", required: true },
       { name: "destination", required: true }
-    ]
-  },
-  {
-    id: "return-route",
-    kind: "return",
-    label: "return",
-    source: "destination"
+    ],
+    returnSource: "destination"
   }
 ];
 const multiParamModuleFlowCallSource = buildRegion("main", multiParamModuleFlowCallNodes, [
   { from: "input-main", to: "module-call-route" },
-  { from: "module-call-route", to: "return-main" },
-  { from: "input-route", to: "return-route" }
 ]);
 assert.match(multiParamModuleFlowCallSource, /export async function main\(origin, destination\)/);
 assert.match(multiParamModuleFlowCallSource, /const routeResult = await route\(origin, destination\);/);
@@ -518,6 +472,7 @@ const executableFunctionNodes = [
     label: "input",
     functionName: "runProgram",
     params: [],
+    returnSource: "result",
     execute: true
   },
   {
@@ -527,29 +482,16 @@ const executableFunctionNodes = [
     code: "const result = \"done\";"
   },
   {
-    id: "runner-return",
-    kind: "return",
-    label: "return",
-    source: "result"
-  },
-  {
     id: "helper-input",
     kind: "input",
     label: "input",
     functionName: "helper",
-    params: []
-  },
-  {
-    id: "helper-return",
-    kind: "return",
-    label: "return",
-    source: "\"helper\""
+    params: [],
+    returnSource: "\"helper\""
   }
 ];
 const executableFunctionSource = buildRegion("main", executableFunctionNodes, [
   { from: "runner-input", to: "runner-code" },
-  { from: "runner-code", to: "runner-return" },
-  { from: "helper-input", to: "helper-return" }
 ]);
 assert.match(executableFunctionSource, /export async function runProgram\(\)/);
 assert.match(executableFunctionSource, /export async function helper\(\)/);
@@ -581,11 +523,9 @@ export async function main2(input) {
 // @moduleflow:end
 `;
 const uniqueInputReturnModel = createModelFromSource("main.js", uniqueInputReturnSource, []);
-assert.deepEqual(uniqueInputReturnModel.nodes.map((node) => node.id), ["input-100", "return-100", "input-200", "return-200"]);
-assert.deepEqual(uniqueInputReturnModel.controlFlow, [
-  { from: "input-100", to: "return-100" },
-  { from: "input-200", to: "return-200" }
-]);
+assert.deepEqual(uniqueInputReturnModel.nodes.map((node) => node.id), ["input-100", "input-200"]);
+assert.deepEqual(uniqueInputReturnModel.nodes.map((node) => node.returnSource), ["input", "input"]);
+assert.deepEqual(uniqueInputReturnModel.controlFlow, []);
 
 const duplicateCodeSourceNodes = [
   {
@@ -714,11 +654,12 @@ export async function main(input) {
 `;
 
 const formattedModel = createModelFromSource("main.js", formattedSource, imports);
-assert.equal(formattedModel.nodes.length, 5);
+assert.equal(formattedModel.nodes.length, 4);
 
 const formattedInput = formattedModel.nodes[0];
 assert.deepEqual(formattedInput.position, { x: 1, y: 2 });
 assert.equal(formattedInput.description, "Formatted input");
+assert.equal(formattedInput.returnSource, "distance");
 
 const classNode = formattedModel.nodes[1];
 assert.equal(classNode.kind, "classInstance");
@@ -741,15 +682,10 @@ assert.deepEqual(asyncCallNode.inputMappings, {
   destination: "input.destination"
 });
 
-const formattedReturn = formattedModel.nodes[4];
-assert.equal(formattedReturn.kind, "return");
-assert.equal(formattedReturn.source, "distance");
-assert.deepEqual(formattedReturn.position, { x: 110, y: 120 });
 assert.deepEqual(formattedModel.controlFlow, [
   { from: "input", to: "client-node" },
   { from: "client-node", to: "result-node" },
-  { from: "result-node", to: "distance-node" },
-  { from: "distance-node", to: "return" }
+  { from: "result-node", to: "distance-node" }
 ]);
 
 const changedSignatureImports = [
@@ -847,7 +783,8 @@ export async function main(input) {
 }
 // @moduleflow:end
 `, []);
-assert.equal(localCallModel.nodes.length, 3);
+assert.equal(localCallModel.nodes.length, 2);
+assert.equal(localCallModel.nodes[0].returnSource, "status");
 const localCallNode = localCallModel.nodes[1];
 assert.equal(localCallNode.kind, "call");
 assert.equal(localCallNode.exportName, "chooseStatus");
@@ -865,8 +802,8 @@ export async function main(input) {
 }
 // @moduleflow:end
 `, []);
-assert.deepEqual(expressionModel.nodes.map((node) => node.kind), ["input", "return"]);
-assert.equal(expressionModel.nodes[1].source, "summary");
+assert.deepEqual(expressionModel.nodes.map((node) => node.kind), ["input"]);
+assert.equal(expressionModel.nodes[0].returnSource, "summary");
 
 const legacyCodeModel = createModelFromSource("main.js", `
 // @moduleflow:start
@@ -880,7 +817,8 @@ export async function main(input) {
 }
 // @moduleflow:end
 `, []);
-assert.deepEqual(legacyCodeModel.nodes.map((node) => node.kind), ["input", "code", "return"]);
+assert.deepEqual(legacyCodeModel.nodes.map((node) => node.kind), ["input", "code"]);
+assert.equal(legacyCodeModel.nodes[0].returnSource, "legacyValue");
 assert.equal(legacyCodeModel.nodes[1].code, "const legacyValue = input.value;");
 
 const commentOnlyCodeModel = createModelFromSource("main.js", `
@@ -895,7 +833,8 @@ export async function main(input) {
 }
 // @moduleflow:end
 `, []);
-assert.deepEqual(commentOnlyCodeModel.nodes.map((node) => node.kind), ["input", "code", "return"]);
+assert.deepEqual(commentOnlyCodeModel.nodes.map((node) => node.kind), ["input", "code"]);
+assert.equal(commentOnlyCodeModel.nodes[0].returnSource, "input");
 assert.equal(commentOnlyCodeModel.nodes[1].code, "// Keep this note on the canvas.");
 
 const idOwnedMetadataModel = createModelFromSource("main.js", `
@@ -913,9 +852,9 @@ export async function main(input) {
 }
 // @moduleflow:end
 `, []);
-assert.deepEqual(idOwnedMetadataModel.nodes.map((node) => node.id), ["input", "status-node", "return"]);
+assert.deepEqual(idOwnedMetadataModel.nodes.map((node) => node.id), ["input", "status-node"]);
+assert.equal(idOwnedMetadataModel.nodes[0].returnSource, "status");
 assert.equal(idOwnedMetadataModel.nodes[1].description, "Should attach");
-assert.equal(idOwnedMetadataModel.nodes[2].description, "Right return description");
 
 const legacyGroupModel = createModelFromSource("main.js", `
 // @moduleflow:start
