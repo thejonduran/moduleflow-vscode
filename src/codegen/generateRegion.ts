@@ -44,7 +44,7 @@ function argsFor(
 }
 
 function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }>): { name: string; required: boolean; defaultValue?: string }[] {
-  return node.params?.length > 0 ? node.params : [{ name: "input", required: true }];
+  return node.params === undefined ? [{ name: "input", required: true }] : node.params;
 }
 
 function moduleFlowFunctionName(nodes: ModuleFlowNode[], inputNodeId: string): string | undefined {
@@ -141,6 +141,9 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
     .filter((node): node is Extract<ModuleFlowNode, { kind: "markdown" }> => node.kind === "markdown")
     .map(markdownCommentsFor)
     .filter((line): line is string => Boolean(line));
+  const executeCall = flows
+    .find((flow) => flow.input.execute && inputParamsFor(flow.input).length === 0)
+    ?.input.functionName;
 
   if (functions.length === 0 && nodes.length > 0 && !controlFlow) {
     const inputNode = nodes.find((node): node is Extract<ModuleFlowNode, { kind: "input" }> => node.kind === "input");
@@ -157,6 +160,7 @@ export function buildRegion(functionName: string, nodes: ModuleFlowNode[], contr
   return [
     startMarker,
     ...functions,
+    ...(executeCall ? [`${executeCall}();`] : []),
     ...markdownNodes,
     endMarker
   ].join("\n\n");

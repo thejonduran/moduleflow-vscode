@@ -74,7 +74,7 @@ function defaultDirectInputMappings(params: { name: string }[]): Record<string, 
 }
 
 function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }>): ExportParameter[] {
-  return node.params?.length > 0 ? node.params : [{ name: "input", required: true }];
+  return node.params === undefined ? [{ name: "input", required: true }] : node.params;
 }
 
 function resultVariableBase(exportName: string): string {
@@ -501,7 +501,7 @@ export async function updateFunctionInputs(
     defaultValue: param.defaultValue
   }));
   const names = new Set<string>();
-  if (params.length === 0 || params.some((param) => !sanitizeIdentifier(param.name) || names.has(param.name) || (names.add(param.name), false))) {
+  if (params.some((param) => !sanitizeIdentifier(param.name) || names.has(param.name) || (names.add(param.name), false))) {
     void vscode.window.showErrorMessage("ModuleFlow function inputs must be unique valid JavaScript identifiers.");
     return;
   }
@@ -515,6 +515,9 @@ export async function updateFunctionInputs(
     if (newParam && oldParam.name !== newParam.name) {
       updateExactSourceReference(model, oldParam.name, newParam.name, flowNodeIds);
       updateExactSourceReference(model, `input.${oldParam.name}`, newParam.name, flowNodeIds);
+    } else if (!newParam) {
+      updateExactSourceReference(model, oldParam.name, "undefined", flowNodeIds);
+      updateExactSourceReference(model, `input.${oldParam.name}`, "undefined", flowNodeIds);
     }
   });
 
@@ -531,6 +534,35 @@ export async function updateFunctionInputs(
   }
 
   inputNode.params = params;
+  if (params.length > 0) {
+    inputNode.execute = undefined;
+  }
+  await persistModel(targetUri, model);
+}
+
+export async function updateFunctionExecute(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { nodeId: string; execute: boolean }
+): Promise<void> {
+  const inputNode = model.nodes.find((item): item is Extract<ModuleFlowNode, { kind: "input" }> =>
+    item.kind === "input" && item.id === message.nodeId
+  );
+  if (!inputNode) {
+    return;
+  }
+
+  if (message.execute && inputParamsFor(inputNode).length > 0) {
+    void vscode.window.showErrorMessage("Only functions with no inputs can be executed automatically.");
+    return;
+  }
+
+  for (const node of model.nodes) {
+    if (node.kind === "input") {
+      node.execute = node.id === inputNode.id && message.execute ? true : undefined;
+    }
+  }
+
   await persistModel(targetUri, model);
 }
 

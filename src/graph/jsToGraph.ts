@@ -62,6 +62,10 @@ function paramsForArgs(args: string[]): { name: string; required: boolean }[] {
 }
 
 function paramsForFunction(functionNode: t.FunctionDeclaration): ExportParameter[] {
+  if (functionNode.params.length === 0) {
+    return [];
+  }
+
   const params = functionNode.params.flatMap((param): ExportParameter[] => {
     if (t.isIdentifier(param)) {
       return [{ name: param.name, required: true }];
@@ -369,6 +373,30 @@ function findModuleFlowFunctions(source: string): t.FunctionDeclaration[] {
   return functions;
 }
 
+function findExecutedFunctionName(source: string): string | undefined {
+  const ast = parse(source, {
+    sourceType: "module",
+    plugins: ["jsx"],
+    attachComment: true
+  });
+  const functionNames = new Set(findModuleFlowFunctions(source).map((functionNode) => functionNode.id?.name).filter(Boolean));
+  let executedFunctionName: string | undefined;
+
+  for (const statement of ast.program.body) {
+    if (!t.isExpressionStatement(statement) || !t.isCallExpression(statement.expression)) {
+      continue;
+    }
+
+    const callExpression = statement.expression;
+    const functionName = identifierName(callExpression.callee);
+    if (functionName && functionNames.has(functionName) && callExpression.arguments.length === 0) {
+      executedFunctionName = functionName;
+    }
+  }
+
+  return executedFunctionName;
+}
+
 function markdownNodesFromRegion(source: string): Array<Extract<ModuleFlowNode, { kind: "markdown" }>> {
   const comments: t.Comment[] = [];
   const commentPattern = /^[ \t]*\/\/(.*)$/gm;
@@ -449,6 +477,7 @@ export function createModelFromSource(targetFile: string, source: string, import
   const controlFlow: ControlFlowEdge[] = [];
   const inputIdByFunctionName = new Map<string, string>();
   const paramsByFunctionName = new Map<string, ExportParameter[]>();
+  const executedFunctionName = findExecutedFunctionName(region);
   functionNodes.forEach((functionNode, index) => {
     const functionName = functionNode.id?.name ?? `main${index + 1}`;
     let inputId = index === 0 ? "input" : `${functionName}-input`;
@@ -478,7 +507,8 @@ export function createModelFromSource(targetFile: string, source: string, import
       kind: "input",
       label: "input",
       functionName,
-      params: paramsForFunction(functionNode)
+      params: paramsForFunction(functionNode),
+      execute: functionName === executedFunctionName && paramsForFunction(functionNode).length === 0 ? true : undefined
     };
     if (discoveredInputMetadata) {
       Object.assign(inputNode, discoveredInputMetadata);

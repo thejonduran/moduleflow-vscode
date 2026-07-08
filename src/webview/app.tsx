@@ -111,7 +111,7 @@ function moduleFlowFunctionFor(model: ModuleFlowModel | undefined, functionNodeI
 }
 
 function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }> | undefined): ExportParameter[] {
-  return node?.params?.length ? node.params : [{ name: "input", required: true }];
+  return node?.params === undefined ? [{ name: "input", required: true }] : node.params;
 }
 
 function moduleFlowCallParams(model: ModuleFlowModel | undefined, node: Extract<ModuleFlowNode, { kind: "moduleFlowCall" }>): ExportParameter[] {
@@ -1009,7 +1009,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   };
 
   const updateFunctionInputsLocal = (params: ExportParameter[], options: { commit?: boolean } = {}) => {
-    if (selectedNode.kind !== "input" || params.length === 0) {
+    if (selectedNode.kind !== "input") {
       return;
     }
 
@@ -1018,6 +1018,9 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       const inputNode = nextModel.nodes.find((item) => item.id === selectedNode.id);
       if (inputNode?.kind === "input") {
         inputNode.params = params;
+        if (params.length > 0) {
+          inputNode.execute = undefined;
+        }
         onModelChange(nextModel);
       }
     }
@@ -1030,6 +1033,28 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       type: "updateFunctionInputs",
       nodeId: selectedNode.id,
       params
+    });
+  };
+
+  const updateFunctionExecuteLocal = (execute: boolean) => {
+    if (selectedNode.kind !== "input" || inputParamsFor(selectedNode).length > 0) {
+      return;
+    }
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      for (const node of nextModel.nodes) {
+        if (node.kind === "input") {
+          node.execute = node.id === selectedNode.id && execute ? true : undefined;
+        }
+      }
+      onModelChange(nextModel);
+    }
+
+    vscode.postMessage({
+      type: "updateFunctionExecute",
+      nodeId: selectedNode.id,
+      execute
     });
   };
 
@@ -1220,7 +1245,9 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
   return (
     <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
-      {!hasVariable(selectedNode) && selectedNode.kind !== "input" && <div className="node-title-label">{selectedNode.kind}</div>}
+      {!hasVariable(selectedNode) && !["input", "code", "return"].includes(selectedNode.kind) && (
+        <div className="node-title-label">{selectedNode.kind}</div>
+      )}
       {hasVariable(selectedNode) ? (
         <input
           className="node-title-input nodrag"
@@ -1323,7 +1350,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
                   </button>
                   <button
                     className="mini-action-button danger"
-                    disabled={params.length === 1}
                     onClick={() => updateFunctionInputsLocal(params.filter((_item, itemIndex) => itemIndex !== index))}
                     type="button"
                   >
@@ -1348,6 +1374,16 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
             >
               + Input
             </button>
+            {inputParamsFor(selectedNode).length === 0 && (
+              <label className="checkbox-label">
+                <input
+                  checked={Boolean(selectedNode.execute)}
+                  onChange={(event) => updateFunctionExecuteLocal(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                Execute
+              </label>
+            )}
           </>
         )}
 
@@ -2240,6 +2276,21 @@ style.textContent = `
     grid-template-columns: minmax(0, 1fr) auto auto auto;
     gap: 5px;
     align-items: center;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    margin-top: 12px;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: auto;
+    margin: 0;
   }
 
   .mini-action-button {

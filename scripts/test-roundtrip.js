@@ -511,6 +511,60 @@ assert.deepEqual(parsedMultiParamModuleFlowCall.inputMappings, {
   destination: "destination"
 });
 
+const executableFunctionNodes = [
+  {
+    id: "runner-input",
+    kind: "input",
+    label: "input",
+    functionName: "runProgram",
+    params: [],
+    execute: true
+  },
+  {
+    id: "runner-code",
+    kind: "code",
+    label: "code",
+    code: "const result = \"done\";"
+  },
+  {
+    id: "runner-return",
+    kind: "return",
+    label: "return",
+    source: "result"
+  },
+  {
+    id: "helper-input",
+    kind: "input",
+    label: "input",
+    functionName: "helper",
+    params: []
+  },
+  {
+    id: "helper-return",
+    kind: "return",
+    label: "return",
+    source: "\"helper\""
+  }
+];
+const executableFunctionSource = buildRegion("main", executableFunctionNodes, [
+  { from: "runner-input", to: "runner-code" },
+  { from: "runner-code", to: "runner-return" },
+  { from: "helper-input", to: "helper-return" }
+]);
+assert.match(executableFunctionSource, /export async function runProgram\(\)/);
+assert.match(executableFunctionSource, /export async function helper\(\)/);
+assert.match(executableFunctionSource, /}\s+runProgram\(\);\s+\/\/ @moduleflow:end/s);
+assert.doesNotMatch(executableFunctionSource, /helper\(\);\s+\/\/ @moduleflow:end/s);
+const executableFunctionModel = createModelFromSource("main.js", executableFunctionSource, []);
+const parsedExecutableInput = executableFunctionModel.nodes.find((node) => node.id === "runner-input");
+const parsedHelperInput = executableFunctionModel.nodes.find((node) => node.id === "helper-input");
+assert.equal(parsedExecutableInput.kind, "input");
+assert.deepEqual(parsedExecutableInput.params, []);
+assert.equal(parsedExecutableInput.execute, true);
+assert.equal(parsedHelperInput.kind, "input");
+assert.deepEqual(parsedHelperInput.params, []);
+assert.equal(parsedHelperInput.execute, undefined);
+
 const uniqueInputReturnSource = `
 // @moduleflow:start
 export async function main(input) {
