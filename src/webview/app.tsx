@@ -1008,29 +1008,28 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     });
   };
 
-  const updateFunctionInputsLocal = (params: ExportParameter[]) => {
+  const updateFunctionInputsLocal = (params: ExportParameter[], options: { commit?: boolean } = {}) => {
     if (selectedNode.kind !== "input" || params.length === 0) {
       return;
     }
-
-    const normalized = params.map((param) => ({
-      ...param,
-      name: param.name.trim()
-    }));
 
     if (model && onModelChange) {
       const nextModel = cloneModel(model);
       const inputNode = nextModel.nodes.find((item) => item.id === selectedNode.id);
       if (inputNode?.kind === "input") {
-        inputNode.params = normalized;
+        inputNode.params = params;
         onModelChange(nextModel);
       }
+    }
+
+    if (options.commit === false) {
+      return;
     }
 
     vscode.postMessage({
       type: "updateFunctionInputs",
       nodeId: selectedNode.id,
-      params: normalized
+      params
     });
   };
 
@@ -1281,7 +1280,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
             <h3>Function inputs</h3>
             <div className="function-input-list">
               {inputParamsFor(selectedNode).map((param, index, params) => (
-                <div className="function-input-row" key={`${param.name}-${index}`}>
+                <div className="function-input-row" key={index}>
                   <input
                     aria-label={`Input ${index + 1} name`}
                     value={param.name}
@@ -1289,7 +1288,13 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
                       const nextParams = params.map((item, itemIndex) =>
                         itemIndex === index ? { ...item, name: event.currentTarget.value } : item
                       );
-                      updateFunctionInputsLocal(nextParams);
+                      updateFunctionInputsLocal(nextParams, { commit: false });
+                    }}
+                    onBlur={() => updateFunctionInputsLocal(inputParamsFor(selectedNode))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      }
                     }}
                   />
                   <button
