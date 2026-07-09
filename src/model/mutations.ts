@@ -620,7 +620,7 @@ export async function renameCodeNode(targetUri: vscode.Uri, model: ModuleFlowMod
     return;
   }
 
-  node.label = message.label.trim() || "code";
+  node.label = message.label.trim().length > 0 ? message.label : "code";
   await persistModel(targetUri, model);
 }
 

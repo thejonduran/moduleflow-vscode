@@ -946,7 +946,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       return;
     }
 
-    const label = nextLabel.trim() || "code";
+    const label = nextLabel.trim().length > 0 ? nextLabel : "code";
     if (label === selectedNode.label) {
       return;
     }
@@ -1341,8 +1341,9 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           onChange={(event) => renameFunction(event.currentTarget.value.trim())}
         />
       ) : selectedNode.kind === "code" ? (
-        <input
-          className="node-title-input nodrag"
+        <textarea
+          className="node-title-input node-title-textarea nodrag"
+          rows={Math.max(1, selectedNode.label.split(/\r?\n/).length)}
           value={selectedNode.label}
           onChange={(event) => renameCodeNode(event.currentTarget.value)}
         />
@@ -2843,6 +2844,15 @@ style.textContent = `
     font-size: 20px;
     font-weight: 700;
     line-height: 1.2;
+  }
+
+  .node-title-textarea {
+    display: block;
+    min-height: calc(1.2em + 8px);
+    overflow: hidden;
+    resize: none;
+    font-family: inherit;
+    white-space: pre-wrap;
   }
 
   .node-title-input:hover,
