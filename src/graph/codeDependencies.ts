@@ -171,7 +171,7 @@ function isReferencedIdentifier(node: t.Identifier, parent: t.Node, grandparent:
   }
 
   if (parent.type === "AssignmentExpression") {
-    return parent.right === node;
+    return parent.left === node || parent.right === node;
   }
 
   if (parent.type === "AssignmentPattern") {

@@ -11,7 +11,9 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
     node.kind === "input" ? "kind:input" : undefined,
     node.kind === "code" ? "kind:code" : undefined,
     node.kind === "markdown" ? "kind:markdown" : undefined,
-    node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined
+    node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined,
+    node.kind === "code" && node.label !== "code" ? `label:${JSON.stringify(node.label)}` : undefined,
+    node.kind === "markdown" && node.parentNodeId ? `parent:${node.parentNodeId}` : undefined
   ].filter(Boolean);
 
   return metadataParts.length > 0

@@ -106,6 +106,36 @@ function setNodePosition(model: ModuleFlowModel, nodeId: string, position: { x: 
   }
 }
 
+function applyPositionsWithAttachedMarkdown(
+  model: ModuleFlowModel,
+  positions: { nodeId: string; position: { x: number; y: number } }[]
+): void {
+  const moved = new Map(positions.map((item) => [item.nodeId, item.position]));
+  const originalPositions = new Map(model.nodes.map((node) => [node.id, node.position]));
+
+  for (const item of positions) {
+    setNodePosition(model, item.nodeId, item.position);
+  }
+
+  for (const node of model.nodes) {
+    if (node.kind !== "markdown" || !node.parentNodeId || moved.has(node.id)) {
+      continue;
+    }
+
+    const parentPosition = moved.get(node.parentNodeId);
+    const originalParentPosition = originalPositions.get(node.parentNodeId);
+    const originalMarkdownPosition = originalPositions.get(node.id);
+    if (!parentPosition || !originalParentPosition || !originalMarkdownPosition) {
+      continue;
+    }
+
+    node.position = {
+      x: originalMarkdownPosition.x + parentPosition.x - originalParentPosition.x,
+      y: originalMarkdownPosition.y + parentPosition.y - originalParentPosition.y
+    };
+  }
+}
+
 function setNodeSize(model: ModuleFlowModel, nodeId: string, size: { width: number; height: number }): void {
   const node = model.nodes.find((item) => item.id === nodeId);
   if (node) {
@@ -432,7 +462,7 @@ export async function setFunctionReturnSource(targetUri: vscode.Uri, model: Modu
 }
 
 export async function updatePosition(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; position: { x: number; y: number } }): Promise<void> {
-  setNodePosition(model, message.nodeId, message.position);
+  applyPositionsWithAttachedMarkdown(model, [{ nodeId: message.nodeId, position: message.position }]);
   await persistModel(targetUri, model);
 }
 
@@ -441,10 +471,17 @@ export async function updatePositions(
   model: ModuleFlowModel,
   message: { positions: { nodeId: string; position: { x: number; y: number } }[] }
 ): Promise<void> {
-  for (const item of message.positions) {
-    setNodePosition(model, item.nodeId, item.position);
+  applyPositionsWithAttachedMarkdown(model, message.positions);
+  await persistModel(targetUri, model);
+}
+
+export async function updateMarkdownParent(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; parentNodeId: string }): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind !== "markdown") {
+    return;
   }
 
+  node.parentNodeId = message.parentNodeId || undefined;
   await persistModel(targetUri, model);
 }
 
@@ -574,6 +611,16 @@ export async function updateCode(targetUri: vscode.Uri, model: ModuleFlowModel, 
   }
 
   node.code = message.code;
+  await persistModel(targetUri, model);
+}
+
+export async function renameCodeNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; label: string }): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind !== "code") {
+    return;
+  }
+
+  node.label = message.label.trim() || "code";
   await persistModel(targetUri, model);
 }
 

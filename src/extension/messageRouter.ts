@@ -12,6 +12,7 @@ import {
   deleteNode,
   duplicateNode,
   mapInput,
+  renameCodeNode,
   renameVariable,
   renameFunction,
   setInputExpression,
@@ -20,6 +21,7 @@ import {
   updateDescription,
   updateFunctionExecute,
   updateFunctionInputs,
+  updateMarkdownParent,
   updateControlFlow,
   updateCode,
   updateMarkdown,
@@ -200,6 +202,13 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
+    if (message?.type === "updateMarkdownParent") {
+      const current = currentModel(context);
+      await updateMarkdownParent(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
     if (message?.type === "updateNodeSize") {
       const current = currentModel(context);
       await updateNodeSize(context.targetUri, current, message as never);
@@ -249,6 +258,13 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
     if (message?.type === "renameFunction") {
       const current = currentModel(context);
       await renameFunction(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "renameCodeNode") {
+      const current = currentModel(context);
+      await renameCodeNode(context.targetUri, current, message as never);
       context.models.set(context.key, current);
       return;
     }

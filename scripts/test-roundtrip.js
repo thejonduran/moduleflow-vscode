@@ -183,6 +183,7 @@ assert.deepEqual(
   codeDependencies("const names = people.map(({ name }) => name.toUpperCase());"),
   ["people"]
 );
+assert.deepEqual(codeDependencies("a = b;"), ["a", "b"]);
 
 assert.deepEqual(model.controlFlow, [
   { from: "input", to: "client-1" },

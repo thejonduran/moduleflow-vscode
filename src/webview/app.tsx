@@ -146,19 +146,43 @@ function nodePosition(node: ModuleFlowNode, index: number) {
   return { x: 240 + index * 210, y: 120 };
 }
 
-function codeNodeWidth(code: string): number {
-  const longestLine = code
-    .split(/\r?\n/)
-    .reduce((longest, line) => Math.max(longest, line.replace(/\t/g, "  ").length), 0);
-
-  return Math.max(268, Math.min(760, 24 + longestLine * 7.25));
-}
-
 function markdownNodeSize(node: Extract<ModuleFlowNode, { kind: "markdown" }>): { width: number; height: number } {
   return {
     width: node.size?.width ?? 350,
     height: node.size?.height ?? 200
   };
+}
+
+function positionsWithAttachedMarkdown(
+  model: ModuleFlowModel,
+  positions: { nodeId: string; position: { x: number; y: number } }[]
+): { nodeId: string; position: { x: number; y: number } }[] {
+  const moved = new Map(positions.map((item) => [item.nodeId, item.position]));
+  const originalPositions = new Map(model.nodes.map((node) => [node.id, node.position]));
+  const expanded = [...positions];
+
+  for (const node of model.nodes) {
+    if (node.kind !== "markdown" || !node.parentNodeId || moved.has(node.id)) {
+      continue;
+    }
+
+    const parentPosition = moved.get(node.parentNodeId);
+    const originalParentPosition = originalPositions.get(node.parentNodeId);
+    const originalMarkdownPosition = originalPositions.get(node.id);
+    if (!parentPosition || !originalParentPosition || !originalMarkdownPosition) {
+      continue;
+    }
+
+    expanded.push({
+      nodeId: node.id,
+      position: {
+        x: originalMarkdownPosition.x + parentPosition.x - originalParentPosition.x,
+        y: originalMarkdownPosition.y + parentPosition.y - originalParentPosition.y
+      }
+    });
+  }
+
+  return expanded;
 }
 
 function toFlowNodes(model: ModuleFlowModel, onModelChange?: (model: ModuleFlowModel) => void): Node<FlowNodeData>[] {
@@ -829,7 +853,7 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
   }
 
   if (node.kind === "code") {
-    return "flow-only statement";
+    return "code";
   }
 
   return "";
@@ -905,6 +929,32 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       type: "renameFunction",
       nodeId: selectedNode.id,
       functionName: nextName
+    });
+  };
+
+  const renameCodeNode = (nextLabel: string) => {
+    if (selectedNode.kind !== "code") {
+      return;
+    }
+
+    const label = nextLabel.trim() || "code";
+    if (label === selectedNode.label) {
+      return;
+    }
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "code") {
+        node.label = label;
+        onModelChange(nextModel);
+      }
+    }
+
+    vscode.postMessage({
+      type: "renameCodeNode",
+      nodeId: selectedNode.id,
+      label
     });
   };
 
@@ -1082,6 +1132,27 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     });
   };
 
+  const updateMarkdownParentLocal = (parentNodeId: string) => {
+    if (selectedNode.kind !== "markdown") {
+      return;
+    }
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "markdown") {
+        node.parentNodeId = parentNodeId || undefined;
+        onModelChange(nextModel);
+      }
+    }
+
+    vscode.postMessage({
+      type: "updateMarkdownParent",
+      nodeId: selectedNode.id,
+      parentNodeId
+    });
+  };
+
   const resizeMarkdown = (size: { width: number; height: number }) => {
     if (selectedNode.kind !== "markdown") {
       return;
@@ -1113,6 +1184,9 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
   if (selectedNode.kind === "markdown") {
     const size = markdownNodeSize(selectedNode);
+    const parentOptions = model?.nodes.filter((node): node is Extract<ModuleFlowNode, { kind: "input" }> =>
+      node.kind === "input"
+    ) ?? [];
 
     return (
       <div className="node-card node-card-markdown" style={{ width: size.width, height: size.height }}>
@@ -1143,6 +1217,20 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
         <details className="node-properties markdown-properties nodrag">
           <summary>Properties</summary>
+          <label>
+            Parent node
+            <select
+              value={selectedNode.parentNodeId ?? ""}
+              onChange={(event) => updateMarkdownParentLocal(event.currentTarget.value)}
+            >
+              <option value="">none</option>
+              {parentOptions.map((node) => (
+                <option value={node.id} key={node.id}>
+                  {nodeTitle(node)}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="action-button"
             onClick={() =>
@@ -1218,16 +1306,13 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       : selectedNode.kind === "code"
         ? codeOutputs(selectedNode.code).map((name) => ({ id: `output:${selectedNode.id}:${name}`, label: name }))
         : [];
-  const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code"
-    ? { width: codeNodeWidth(selectedNode.code) }
-    : undefined;
   const flowInputNode = model
     ? discoverFlows(model.nodes, model.controlFlow).flows.find((flow) => flow.nodes.some((node) => node.id === selectedNode.id))?.input
     : undefined;
   const scopedInputOptions = inputParamsFor(flowInputNode).map((param) => param.name);
 
   return (
-    <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
+    <div className={`node-card node-card-${selectedNode.kind}`}>
       {!hasVariable(selectedNode) && !["input", "code"].includes(selectedNode.kind) && (
         <div className="node-title-label">{selectedNode.kind}</div>
       )}
@@ -1243,22 +1328,31 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           value={selectedNode.functionName}
           onChange={(event) => renameFunction(event.currentTarget.value.trim())}
         />
+      ) : selectedNode.kind === "code" ? (
+        <input
+          className="node-title-input nodrag"
+          value={selectedNode.label}
+          onChange={(event) => renameCodeNode(event.currentTarget.value)}
+        />
       ) : (
         <div className="node-title">{nodeTitle(selectedNode)}</div>
       )}
       <div className="node-detail">{nodeDetail(selectedNode, model)}</div>
       {selectedNode.warning && <div className="node-warning">{selectedNode.warning}</div>}
 
-      {selectedNode.kind === "code" && (
-        <CodeEditor
-          value={selectedNode.code}
-          onChange={updateCodeLocal}
-          onCommit={commitCode}
-        />
-      )}
-
       <details className="node-properties nodrag">
         <summary>Properties</summary>
+
+        {selectedNode.kind === "code" && (
+          <>
+            <h3>Code</h3>
+            <CodeEditor
+              value={selectedNode.code}
+              onChange={updateCodeLocal}
+              onCommit={commitCode}
+            />
+          </>
+        )}
 
         <label>
           Description
@@ -1868,12 +1962,28 @@ function App() {
   );
 
   const onNodeDragStop = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
+    const positions = positionsWithAttachedMarkdown(model, [{ nodeId: node.id, position: node.position }]);
+    const nextPositionById = new Map(positions.map((item) => [item.nodeId, item.position]));
+    setNodes((currentNodes) =>
+      currentNodes.map((currentNode) => ({
+        ...currentNode,
+        position: nextPositionById.get(currentNode.id) ?? currentNode.position
+      }))
+    );
+    const nextModel = cloneModel(model);
+    for (const modelNode of nextModel.nodes) {
+      const position = nextPositionById.get(modelNode.id);
+      if (position) {
+        modelNode.position = position;
+      }
+    }
+    setModel(nextModel);
+
     vscode.postMessage({
-      type: "updatePosition",
-      nodeId: node.id,
-      position: node.position
+      type: "updatePositions",
+      positions
     });
-  }, []);
+  }, [model, setNodes]);
 
   const onSelectionChange = useCallback(({ nodes: selectedNodes, edges: selectedEdges }: { nodes: Node[]; edges: Edge[] }) => {
     setSelectedNodeIds(selectedNodes.map((node) => node.id));
@@ -1901,17 +2011,19 @@ function App() {
   }, [model.controlFlow, model.nodes, setEdges, setNodes]);
 
   const onScopeDrag = useCallback((positions: ScopeNodePosition[]) => {
-    const nextPositionById = new Map(positions.map((item) => [item.nodeId, item.position]));
+    const expandedPositions = positionsWithAttachedMarkdown(model, positions);
+    const nextPositionById = new Map(expandedPositions.map((item) => [item.nodeId, item.position]));
     setNodes((currentNodes) =>
       currentNodes.map((node) => ({
         ...node,
         position: nextPositionById.get(node.id) ?? node.position
       }))
     );
-  }, [setNodes]);
+  }, [model, setNodes]);
 
   const onScopeDragEnd = useCallback((positions: ScopeNodePosition[]) => {
-    const nextPositionById = new Map(positions.map((item) => [item.nodeId, item.position]));
+    const expandedPositions = positionsWithAttachedMarkdown(model, positions);
+    const nextPositionById = new Map(expandedPositions.map((item) => [item.nodeId, item.position]));
     const nextModel = cloneModel(model);
     for (const node of nextModel.nodes) {
       const position = nextPositionById.get(node.id);
@@ -1923,7 +2035,7 @@ function App() {
 
     vscode.postMessage({
       type: "updatePositions",
-      positions
+      positions: expandedPositions
     });
   }, [model]);
 
@@ -2325,6 +2437,8 @@ style.textContent = `
     --moduleflow-flowEdge: #d7a846;
     --moduleflow-inputAccent: #58c77a;
     --moduleflow-inputFill: rgba(88, 199, 122, 0.08);
+    --moduleflow-markdownAccent: #4aa3ff;
+    --moduleflow-markdownFill: rgba(74, 163, 255, 0.09);
     --moduleflow-scopeFill: rgba(215, 168, 70, 0.055);
     --moduleflow-scopeBorder: rgba(215, 168, 70, 0.42);
     --moduleflow-footerPortInset: 16px;
@@ -2564,8 +2678,9 @@ style.textContent = `
     display: flex;
     flex-direction: column;
     padding: 12px;
+    border-color: color-mix(in srgb, var(--moduleflow-markdownAccent) 68%, var(--moduleflow-cardBorder) 32%);
     background:
-      linear-gradient(180deg, rgba(215, 168, 70, 0.10), transparent 58%),
+      linear-gradient(180deg, var(--moduleflow-markdownFill), transparent 58%),
       var(--moduleflow-cardBackground);
   }
 

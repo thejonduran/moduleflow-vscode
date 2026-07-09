@@ -12,6 +12,8 @@ type ToolExportMatch = {
 type Metadata = {
   nodeId?: string;
   kind?: string;
+  label?: string;
+  parentNodeId?: string;
   position?: NodePosition;
   size?: {
     width: number;
@@ -98,6 +100,11 @@ function parseDescription(raw: string): string {
   }
 }
 
+function parseMetadataString(rest: string, key: string): string | undefined {
+  const match = new RegExp(`\\b${key}:(\"(?:\\\\.|[^\"\\\\])*\"|\\S+)`).exec(rest);
+  return match ? parseDescription(match[1]) : undefined;
+}
+
 function parseMetadataComment(value: string): { nodeId: string; metadata: Metadata } | undefined {
   const positionMatch = /^@moduleflow:node\s+(\S+)\s+(.+)$/.exec(value);
   if (positionMatch) {
@@ -123,6 +130,14 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
     const kindMatch = /\bkind:(\w+)/.exec(rest);
     if (kindMatch) {
       metadata.kind = kindMatch[1];
+    }
+    const label = parseMetadataString(rest, "label");
+    if (label) {
+      metadata.label = label;
+    }
+    const parentMatch = /\bparent:(\S+)/.exec(rest);
+    if (parentMatch) {
+      metadata.parentNodeId = parentMatch[1];
     }
     return { nodeId, metadata };
   }
@@ -422,6 +437,9 @@ function markdownNodesFromRegion(source: string): Array<Extract<ModuleFlowNode, 
     if (metadata.description) {
       node.description = metadata.description;
     }
+    if (metadata.parentNodeId) {
+      node.parentNodeId = metadata.parentNodeId;
+    }
     nodes.push(node);
   }
 
@@ -525,7 +543,7 @@ export function createModelFromSource(targetFile: string, source: string, import
           parsedNodes.push({
             id: nodeId,
             kind: "code",
-            label: "code",
+            label: codeStartMetadata.label ?? "code",
             code: inlineCode,
             position: codeStartMetadata.position,
             description: codeStartMetadata.description
@@ -549,7 +567,7 @@ export function createModelFromSource(targetFile: string, source: string, import
           parsedNodes.push({
             id: nodeId,
             kind: "code",
-            label: "code",
+            label: codeStartMetadata.label ?? "code",
             code: codeForStatements(codeStatements),
             position: codeStartMetadata.position,
             description: codeStartMetadata.description
@@ -572,7 +590,7 @@ export function createModelFromSource(targetFile: string, source: string, import
         parsedNodes.push({
           id: nodeId,
           kind: "code",
-          label: "code",
+          label: metadata.current.label ?? "code",
           code: metadata.current.code,
           position: metadata.current.position,
           description: metadata.current.description

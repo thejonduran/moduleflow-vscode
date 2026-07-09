@@ -78,6 +78,7 @@ export type ModuleFlowNode =
       kind: "markdown";
       label: string;
       markdown: string;
+      parentNodeId?: string;
       position?: NodePosition;
       size?: NodeSize;
       description?: string;
