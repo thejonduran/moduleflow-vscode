@@ -146,6 +146,14 @@ function nodePosition(node: ModuleFlowNode, index: number) {
   return { x: 240 + index * 210, y: 120 };
 }
 
+function codeNodeWidth(code: string): number {
+  const longestLine = code
+    .split(/\r?\n/)
+    .reduce((longest, line) => Math.max(longest, line.replace(/\t/g, "  ").length), 0);
+
+  return Math.max(268, Math.min(760, 24 + longestLine * 7.25));
+}
+
 function markdownNodeSize(node: Extract<ModuleFlowNode, { kind: "markdown" }>): { width: number; height: number } {
   return {
     width: node.size?.width ?? 350,
@@ -863,6 +871,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const { model, node: selectedNode, onModelChange, sources } = data;
   const updateNodeInternals = useUpdateNodeInternals();
   const [editingMarkdown, setEditingMarkdown] = useState(false);
+  const [codePropertiesOpen, setCodePropertiesOpen] = useState(false);
 
   useEffect(() => {
     if (selectedNode.kind !== "code") {
@@ -871,7 +880,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
 
     const frame = window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
     return () => window.cancelAnimationFrame(frame);
-  }, [selectedNode.id, selectedNode.kind, selectedNode.kind === "code" ? selectedNode.code : undefined, updateNodeInternals]);
+  }, [codePropertiesOpen, selectedNode.id, selectedNode.kind, selectedNode.kind === "code" ? selectedNode.code : undefined, updateNodeInternals]);
 
   const renameOutput = (nextName: string) => {
     if (!hasVariable(selectedNode) || !nextName || nextName === selectedNode.variableName) {
@@ -1310,9 +1319,12 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     ? discoverFlows(model.nodes, model.controlFlow).flows.find((flow) => flow.nodes.some((node) => node.id === selectedNode.id))?.input
     : undefined;
   const scopedInputOptions = inputParamsFor(flowInputNode).map((param) => param.name);
+  const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code" && codePropertiesOpen
+    ? { width: codeNodeWidth(selectedNode.code) }
+    : undefined;
 
   return (
-    <div className={`node-card node-card-${selectedNode.kind}`}>
+    <div className={`node-card node-card-${selectedNode.kind}`} style={cardStyle}>
       {!hasVariable(selectedNode) && !["input", "code"].includes(selectedNode.kind) && (
         <div className="node-title-label">{selectedNode.kind}</div>
       )}
@@ -1340,7 +1352,14 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       <div className="node-detail">{nodeDetail(selectedNode, model)}</div>
       {selectedNode.warning && <div className="node-warning">{selectedNode.warning}</div>}
 
-      <details className="node-properties nodrag">
+      <details
+        className="node-properties nodrag"
+        onToggle={(event) => {
+          if (selectedNode.kind === "code") {
+            setCodePropertiesOpen(event.currentTarget.open);
+          }
+        }}
+      >
         <summary>Properties</summary>
 
         {selectedNode.kind === "code" && (
