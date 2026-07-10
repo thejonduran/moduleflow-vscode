@@ -1,7 +1,7 @@
 import { ControlFlowEdge, ModuleFlowNode } from "../types";
 import { discoverFlows } from "../graph/flowDiscovery";
-import { mapVariableExpression } from "../graph/variableExpressions";
 import { assertWritableModuleFlowRegion, inspectModuleFlowRegion, startMarker, endMarker } from "./moduleFlowRegion";
+import { mapVariableExpression } from "./variableExpressionCodegen";
 
 function positionCommentFor(node: ModuleFlowNode): string | undefined {
   const metadataParts = [
