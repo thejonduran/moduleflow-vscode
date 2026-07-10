@@ -26,7 +26,7 @@ import {
   useNodesState
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ExportParameter, ModuleFlowModel, ModuleFlowNode } from "../types";
+import { ExportParameter, ModuleFlowModel, ModuleFlowNode, VariableValueType } from "../types";
 import { codeDependencies } from "../graph/codeDependencies";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows, previousScopedSourceRefs, previousScopedSources } from "../graph/flowDiscovery";
@@ -67,6 +67,9 @@ type ToolDragPayload =
     }
   | {
       type: "addCodeNode";
+    }
+  | {
+      type: "addVariableNode";
     }
   | {
       type: "addNode";
@@ -147,7 +150,11 @@ function nodePosition(node: ModuleFlowNode, index: number) {
 }
 
 function codeNodeWidth(code: string): number {
-  const longestLine = code
+  return textEditorWidth(code);
+}
+
+function textEditorWidth(value: string): number {
+  const longestLine = value
     .split(/\r?\n/)
     .reduce((longest, line) => Math.max(longest, line.replace(/\t/g, "  ").length), 0);
 
@@ -864,6 +871,10 @@ function nodeDetail(node: ModuleFlowNode, model?: ModuleFlowModel): string {
     return "code";
   }
 
+  if (node.kind === "variable") {
+    return node.valueType;
+  }
+
   return "";
 }
 
@@ -872,6 +883,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const [editingMarkdown, setEditingMarkdown] = useState(false);
   const [codePropertiesOpen, setCodePropertiesOpen] = useState(false);
+  const [variablePropertiesOpen, setVariablePropertiesOpen] = useState(false);
 
   useEffect(() => {
     if (selectedNode.kind !== "code") {
@@ -1035,23 +1047,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
     });
   };
 
-  const updateDescription = (description: string) => {
-    if (model && onModelChange) {
-      const nextModel = cloneModel(model);
-      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
-      if (node) {
-        node.description = description || undefined;
-        onModelChange(nextModel);
-      }
-    }
-
-    vscode.postMessage({
-      type: "updateDescription",
-      nodeId: selectedNode.id,
-      description
-    });
-  };
-
   const updateFunctionInputsLocal = (params: ExportParameter[], options: { commit?: boolean } = {}) => {
     if (selectedNode.kind !== "input") {
       return;
@@ -1119,6 +1114,42 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       type: "updateCode",
       nodeId: selectedNode.id,
       code
+    });
+  };
+
+  const updateVariableLocal = (valueType: VariableValueType, value: string, options: { commit?: boolean } = {}) => {
+    if (selectedNode.kind !== "variable") {
+      return;
+    }
+
+    const nextValue = valueType === "number"
+      ? value.replace(/[^\d.-]/g, "")
+      : valueType === "boolean"
+        ? (value === "true" ? "true" : "false")
+        : valueType === "string"
+          ? value
+          : "";
+
+    if (model && onModelChange) {
+      const nextModel = cloneModel(model);
+      const node = nextModel.nodes.find((item) => item.id === selectedNode.id);
+      if (node?.kind === "variable") {
+        node.valueType = valueType;
+        node.value = nextValue;
+        onModelChange(nextModel);
+        window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
+      }
+    }
+
+    if (options.commit === false) {
+      return;
+    }
+
+    vscode.postMessage({
+      type: "updateVariableNode",
+      nodeId: selectedNode.id,
+      valueType,
+      value: nextValue
     });
   };
 
@@ -1310,6 +1341,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         : [];
   const outputRows = selectedNode.kind === "input"
     ? inputParamsFor(selectedNode).map((param) => ({ id: param.name, label: param.name }))
+    : selectedNode.kind === "variable"
+      ? [{ id: "result", label: selectedNode.variableName }]
     : hasVariable(selectedNode)
       ? [{ id: "result", label: "return" }]
       : selectedNode.kind === "code"
@@ -1321,6 +1354,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const scopedInputOptions = inputParamsFor(flowInputNode).map((param) => param.name);
   const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code" && codePropertiesOpen
     ? { width: codeNodeWidth(selectedNode.code) }
+    : selectedNode.kind === "variable" && selectedNode.valueType === "string" && variablePropertiesOpen
+      ? { width: textEditorWidth(selectedNode.value) }
     : undefined;
 
   return (
@@ -1353,11 +1388,49 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       <div className="node-detail">{nodeDetail(selectedNode, model)}</div>
       {selectedNode.warning && <div className="node-warning">{selectedNode.warning}</div>}
 
+      {(inputRows.length > 0 || outputRows.length > 0) && (
+        <div className="node-section io-section">
+          <div className="io-inputs">
+            {inputRows.length > 0 && (
+              <>
+                <div className="section-label">Inputs</div>
+                {inputRows.map((input) => (
+                  <div className="input-row" key={input.id}>
+                    <Handle id={input.id} type="target" position={Position.Left} className="input-handle" />
+                    <span>{input.label}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+          <div className="io-outputs">
+            {outputRows.length > 0 && selectedNode.kind === "code" && <div className="section-label">Outputs</div>}
+            {outputRows.map((output) => (
+              <div className="output-row" key={output.id}>
+                <span>{output.label}</span>
+                <Handle id={output.id} type="source" position={Position.Right} className="output-handle" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="node-section flow-section">
+        <span>Flow</span>
+        {selectedNode.kind !== "input" && (
+          <Handle id="control-in" type="target" position={Position.Left} className="control-handle control-in-handle" />
+        )}
+        <Handle id="control-out" type="source" position={Position.Right} className="control-handle control-out-handle" />
+      </div>
+
       <details
         className="node-properties nodrag"
         onToggle={(event) => {
           if (selectedNode.kind === "code") {
             setCodePropertiesOpen(event.currentTarget.open);
+          }
+          if (selectedNode.kind === "variable") {
+            setVariablePropertiesOpen(event.currentTarget.open);
           }
         }}
       >
@@ -1374,14 +1447,58 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           </>
         )}
 
-        <label>
-          Description
-          <textarea
-            value={selectedNode.description ?? ""}
-            rows={3}
-            onChange={(event) => updateDescription(event.currentTarget.value)}
-          />
-        </label>
+        {selectedNode.kind === "variable" && (
+          <>
+            <label>
+              Type
+              <select
+                value={selectedNode.valueType}
+                onChange={(event) => updateVariableLocal(event.currentTarget.value as VariableValueType, "")}
+              >
+                <option value="string">String</option>
+                <option value="number">Number</option>
+                <option value="boolean">Boolean</option>
+                <option value="array">Array</option>
+                <option value="object">Object</option>
+                <option value="null">Null</option>
+              </select>
+            </label>
+            {selectedNode.valueType === "string" && (
+              <>
+                <h3>Value</h3>
+                <CodeEditor
+                  value={selectedNode.value}
+                  onChange={(value) => updateVariableLocal("string", value, { commit: false })}
+                  onCommit={(value) => updateVariableLocal("string", value)}
+                />
+              </>
+            )}
+            {selectedNode.valueType === "number" && (
+              <label>
+                Value
+                <input
+                  inputMode="decimal"
+                  pattern="-?[0-9]*\\.?[0-9]*"
+                  value={selectedNode.value}
+                  onChange={(event) => updateVariableLocal("number", event.currentTarget.value, { commit: false })}
+                  onBlur={(event) => updateVariableLocal("number", event.currentTarget.value)}
+                />
+              </label>
+            )}
+            {selectedNode.valueType === "boolean" && (
+              <label>
+                Value
+                <select
+                  value={selectedNode.value === "true" ? "true" : "false"}
+                  onChange={(event) => updateVariableLocal("boolean", event.currentTarget.value)}
+                >
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </label>
+            )}
+          </>
+        )}
 
         {hasParams(selectedNode) && (
           <>
@@ -1563,41 +1680,6 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
           </>
         )}
       </details>
-
-      {(inputRows.length > 0 || outputRows.length > 0) && (
-        <div className="node-section io-section">
-          <div className="io-inputs">
-            {inputRows.length > 0 && (
-              <>
-                <div className="section-label">Inputs</div>
-                {inputRows.map((input) => (
-                  <div className="input-row" key={input.id}>
-                    <Handle id={input.id} type="target" position={Position.Left} className="input-handle" />
-                    <span>{input.label}</span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-          <div className="io-outputs">
-            {outputRows.length > 0 && selectedNode.kind === "code" && <div className="section-label">Outputs</div>}
-            {outputRows.map((output) => (
-              <div className="output-row" key={output.id}>
-                <span>{output.label}</span>
-                <Handle id={output.id} type="source" position={Position.Right} className="output-handle" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="node-section flow-section">
-        <span>Flow</span>
-        {selectedNode.kind !== "input" && (
-          <Handle id="control-in" type="target" position={Position.Left} className="control-handle control-in-handle" />
-        )}
-        <Handle id="control-out" type="source" position={Position.Right} className="control-handle control-out-handle" />
-      </div>
     </div>
   );
 });
@@ -1675,6 +1757,14 @@ function Toolbox({
       <button className="action-button primary" onClick={() => vscode.postMessage({ type: "importTools" })}>Import tools</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addFunction" })}>+ Function</button>
       <button className="action-button" onClick={() => vscode.postMessage({ type: "addCodeNode" })}>+ Code</button>
+      <button
+        className="action-button"
+        draggable
+        onDragStart={(event) => startDrag(event, { type: "addVariableNode" })}
+        onClick={() => vscode.postMessage({ type: "addVariableNode" })}
+      >
+        + Variable
+      </button>
       <button
         className="action-button"
         draggable
@@ -1797,6 +1887,7 @@ function CanvasContextMenu({
       <div className="context-menu-title">Add node</div>
       <button type="button" onClick={() => addAndClose({ type: "addFunction" })}>Function</button>
       <button type="button" onClick={() => addAndClose({ type: "addCodeNode" })}>Code</button>
+      <button type="button" onClick={() => addAndClose({ type: "addVariableNode" })}>Variable</button>
       <button type="button" onClick={() => addAndClose({ type: "addMarkdownNode" })}>Markdown</button>
 
       {moduleFlowFunctions(model).length > 0 && (
@@ -2981,19 +3072,39 @@ style.textContent = `
     border-radius: 5px;
   }
 
+  .node-card:not(.node-card-markdown) > .node-properties {
+    margin: 0 -14px;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
   .node-properties > summary {
     padding: 5px 7px;
     cursor: pointer;
     font-size: 12px;
   }
 
+  .node-card:not(.node-card-markdown) > .node-properties > summary {
+    padding: 7px 24px;
+  }
+
   .node-properties[open] {
     padding: 0 8px 8px;
+  }
+
+  .node-card:not(.node-card-markdown) > .node-properties[open] {
+    padding: 0 24px 12px;
   }
 
   .node-properties[open] > summary {
     margin: 0 -8px 8px;
     border-bottom: 1px solid var(--vscode-panel-border);
+  }
+
+  .node-card:not(.node-card-markdown) > .node-properties[open] > summary {
+    margin: 0 -24px 10px;
   }
 
   .io-section,

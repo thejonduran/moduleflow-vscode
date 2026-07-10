@@ -6,6 +6,7 @@ import {
   addModuleFlowCall,
   addFunction,
   addCodeNode,
+  addVariableNode,
   addMarkdownNode,
   deleteEdge,
   deleteFunction,
@@ -18,9 +19,9 @@ import {
   setInputExpression,
   setModuleFlowCallFunction,
   setFunctionReturnSource,
-  updateDescription,
   updateFunctionExecute,
   updateFunctionInputs,
+  updateVariableNode,
   updateMarkdownParent,
   updateControlFlow,
   updateCode,
@@ -121,6 +122,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
+    if (message?.type === "addVariableNode") {
+      const current = currentModel(context);
+      await addVariableNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
+      return;
+    }
+
     if (message?.type === "addMarkdownNode") {
       const current = currentModel(context);
       await addMarkdownNode(context.targetUri, current, message as never);
@@ -165,13 +174,6 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       return;
     }
 
-    if (message?.type === "updateDescription") {
-      const current = currentModel(context);
-      await updateDescription(context.targetUri, current, message as never);
-      context.models.set(context.key, current);
-      return;
-    }
-
     if (message?.type === "updateFunctionInputs") {
       const current = currentModel(context);
       await updateFunctionInputs(context.targetUri, current, message as never);
@@ -192,6 +194,14 @@ export async function handleWebviewMessage(context: MessageRouterContext, messag
       const current = currentModel(context);
       await updateCode(context.targetUri, current, message as never);
       context.models.set(context.key, current);
+      return;
+    }
+
+    if (message?.type === "updateVariableNode") {
+      const current = currentModel(context);
+      await updateVariableNode(context.targetUri, current, message as never);
+      context.models.set(context.key, current);
+      await publishModel(context, current);
       return;
     }
 

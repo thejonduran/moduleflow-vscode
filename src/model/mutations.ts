@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows } from "../graph/flowDiscovery";
-import { ExportParameter, ModuleExport, ModuleFlowModel, ModuleFlowNode } from "../types";
+import { ExportParameter, ModuleExport, ModuleFlowModel, ModuleFlowNode, VariableValueType } from "../types";
 import { loadModelFromFile, readText, writeText } from "./loadModel";
 
 function toVariableName(raw: string): string {
@@ -81,6 +81,23 @@ function resultVariableBase(exportName: string): string {
   const withoutVerb = exportName.replace(/^(get|build|create|make|calculate)/, "");
   const normalized = withoutVerb || `${exportName}Result`;
   return toVariableName(normalized);
+}
+
+function normalizeVariableValue(valueType: VariableValueType, value: string): string {
+  if (valueType === "number") {
+    const trimmed = value.trim();
+    return /^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed) ? trimmed : "0";
+  }
+
+  if (valueType === "boolean") {
+    return value === "true" ? "true" : "false";
+  }
+
+  if (valueType === "string") {
+    return value;
+  }
+
+  return "";
 }
 
 function findToolExport(model: ModuleFlowModel, modulePath: string, exportName: string): ModuleExport | undefined {
@@ -426,6 +443,20 @@ export async function addCodeNode(targetUri: vscode.Uri, model: ModuleFlowModel,
   await persistModel(targetUri, model);
 }
 
+export async function addVariableNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
+  const variableName = nextVariableName(model, "value");
+  model.nodes.push({
+    id: uniqueNodeId(model, "variable"),
+    kind: "variable",
+    label: "variable",
+    variableName,
+    valueType: "string",
+    value: "",
+    position: message.position
+  });
+  await persistModel(targetUri, model);
+}
+
 export async function addMarkdownNode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { position?: { x: number; y: number } }): Promise<void> {
   model.nodes.push({
     id: uniqueNodeId(model, "markdown"),
@@ -593,17 +624,6 @@ export async function updateNodeSize(targetUri: vscode.Uri, model: ModuleFlowMod
   await persistModel(targetUri, model);
 }
 
-export async function updateDescription(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; description: string }): Promise<void> {
-  const node = model.nodes.find((item) => item.id === message.nodeId);
-  if (!node) {
-    return;
-  }
-
-  const description = message.description.trim();
-  node.description = description || undefined;
-  await persistModel(targetUri, model);
-}
-
 export async function updateCode(targetUri: vscode.Uri, model: ModuleFlowModel, message: { nodeId: string; code: string }): Promise<void> {
   const node = model.nodes.find((item) => item.id === message.nodeId);
   if (!node || node.kind !== "code") {
@@ -611,6 +631,21 @@ export async function updateCode(targetUri: vscode.Uri, model: ModuleFlowModel, 
   }
 
   node.code = message.code;
+  await persistModel(targetUri, model);
+}
+
+export async function updateVariableNode(
+  targetUri: vscode.Uri,
+  model: ModuleFlowModel,
+  message: { nodeId: string; valueType: VariableValueType; value: string }
+): Promise<void> {
+  const node = model.nodes.find((item) => item.id === message.nodeId);
+  if (!node || node.kind !== "variable") {
+    return;
+  }
+
+  node.valueType = message.valueType;
+  node.value = normalizeVariableValue(message.valueType, message.value);
   await persistModel(targetUri, model);
 }
 

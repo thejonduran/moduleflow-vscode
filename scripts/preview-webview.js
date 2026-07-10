@@ -54,8 +54,7 @@ const model = {
       kind: "input",
       label: "input",
       functionName: "main",
-      position: { x: 80, y: 180 },
-      description: "Preview workflow input"
+      position: { x: 80, y: 180 }
     },
     {
       id: "distance-node",
@@ -73,8 +72,7 @@ const model = {
       },
       variableName: "distance",
       async: true,
-      position: { x: 640, y: 190 },
-      description: "Compute travel distance"
+      position: { x: 640, y: 190 }
     },
     {
       id: "summary-node",
@@ -110,24 +108,21 @@ const model = {
       },
       variableName: "draft",
       async: false,
-      position: { x: 940, y: 430 },
-      description: "Unconnected canvas-only draft"
+      position: { x: 940, y: 430 }
     },
     {
       id: "log-node",
       kind: "code",
       label: "code",
       code: "const debugSummary = summary;\nconsole.log(\"summary\", debugSummary);",
-      position: { x: 1240, y: 180 },
-      description: "Inspect the generated summary"
+      position: { x: 1240, y: 180 }
     },
     {
       id: "return",
       kind: "return",
       label: "return",
       source: "summary",
-      position: { x: 1540, y: 190 },
-      description: "Preview return value"
+      position: { x: 1540, y: 190 }
     }
   ]
 };

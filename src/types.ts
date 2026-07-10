@@ -24,10 +24,7 @@ export type NodeSize = {
   height: number;
 };
 
-export type NodeMetadata = {
-  description?: string;
-  warning?: string;
-};
+export type VariableValueType = "string" | "number" | "boolean" | "array" | "object" | "null";
 
 export type ControlFlowEdge = {
   from: string;
@@ -60,7 +57,6 @@ export type ModuleFlowNode =
       execute?: boolean;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     }
   | {
@@ -70,7 +66,6 @@ export type ModuleFlowNode =
       code: string;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     }
   | {
@@ -81,7 +76,17 @@ export type ModuleFlowNode =
       parentNodeId?: string;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
+      warning?: string;
+    }
+  | {
+      id: string;
+      kind: "variable";
+      label: string;
+      variableName: string;
+      valueType: VariableValueType;
+      value: string;
+      position?: NodePosition;
+      size?: NodeSize;
       warning?: string;
     }
   | {
@@ -97,7 +102,6 @@ export type ModuleFlowNode =
       async: boolean;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     }
   | {
@@ -109,7 +113,6 @@ export type ModuleFlowNode =
       variableName: string;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     }
   | {
@@ -124,7 +127,6 @@ export type ModuleFlowNode =
       variableName: string;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     }
   | {
@@ -139,7 +141,6 @@ export type ModuleFlowNode =
       async: boolean;
       position?: NodePosition;
       size?: NodeSize;
-      description?: string;
       warning?: string;
     };
 

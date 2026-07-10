@@ -61,8 +61,7 @@ const nodes = [
     functionName: "main",
     params: [{ name: "input", required: true }],
     returnSource: "user",
-    position: { x: 12, y: 34 },
-    description: "Raw workflow input"
+    position: { x: 12, y: 34 }
   },
   {
     id: "client-1",
@@ -74,8 +73,7 @@ const nodes = [
     params: [{ name: "baseUrl", required: true }],
     inputMappings: { baseUrl: "input.baseUrl" },
     variableName: "client",
-    position: { x: 120, y: 80 },
-    description: "API client"
+    position: { x: 120, y: 80 }
   },
   {
     id: "method-1",
@@ -87,8 +85,7 @@ const nodes = [
     inputMappings: { path: "input.path" },
     variableName: "result",
     async: true,
-    position: { x: 300, y: 120 },
-    description: "Fetch user result"
+    position: { x: 300, y: 120 }
   },
   {
     id: "call-1",
@@ -101,56 +98,66 @@ const nodes = [
     inputMappings: { result: "result" },
     variableName: "user",
     async: false,
-    position: { x: 520, y: 140 },
-    description: "Extract final user"
+    position: { x: 520, y: 140 }
+  },
+  {
+    id: "variable-1",
+    kind: "variable",
+    label: "variable",
+    variableName: "greeting",
+    valueType: "string",
+    value: "Hello ${user}\nWelcome back",
+    position: { x: 600, y: 210 }
   },
   {
     id: "code-1",
     kind: "code",
     label: "code",
     code: "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);",
-    position: { x: 640, y: 260 },
-    description: "Side effect block"
+    position: { x: 640, y: 260 }
   }
 ];
 
 const source = buildRegion("main", nodes);
+assert.match(source, /@moduleflow:node variable-1 x:600 y:210 kind:variable valueType:string/);
+assert.ok(source.includes("const greeting = `Hello \\${user}\nWelcome back`;"));
 assert.match(source, /@moduleflow:node code-1 x:640 y:260 kind:code/);
 assert.match(source, /@moduleflow:node:end code-1/);
 assert.doesNotMatch(source, /@moduleflow:code code-1/);
 const model = createModelFromSource("main.js", source, imports);
 
-assert.equal(model.nodes.length, 5);
+assert.equal(model.nodes.length, 6);
 
-const [input, client, method, call, codeNode] = model.nodes;
+const [input, client, method, call, variableNode, codeNode] = model.nodes;
 assert.deepEqual(input.position, { x: 12, y: 34 });
-assert.equal(input.description, "Raw workflow input");
 assert.equal(input.returnSource, "user");
 
 assert.equal(client.kind, "classInstance");
 assert.equal(client.exportName, "ApiClient");
 assert.deepEqual(client.inputMappings, { baseUrl: "input.baseUrl" });
 assert.deepEqual(client.position, { x: 120, y: 80 });
-assert.equal(client.description, "API client");
 
 assert.equal(method.kind, "methodCall");
 assert.equal(method.instanceVariableName, "client");
 assert.equal(method.methodName, "get");
 assert.deepEqual(method.inputMappings, { path: "input.path" });
 assert.deepEqual(method.position, { x: 300, y: 120 });
-assert.equal(method.description, "Fetch user result");
 
 assert.equal(call.kind, "call");
 assert.equal(call.exportName, "getUserFromResult");
 assert.equal(call.callName, "getUser");
 assert.deepEqual(call.inputMappings, { result: "result" });
 assert.deepEqual(call.position, { x: 520, y: 140 });
-assert.equal(call.description, "Extract final user");
+
+assert.equal(variableNode.kind, "variable");
+assert.equal(variableNode.variableName, "greeting");
+assert.equal(variableNode.valueType, "string");
+assert.equal(variableNode.value, "Hello ${user}\nWelcome back");
+assert.deepEqual(variableNode.position, { x: 600, y: 210 });
 
 assert.equal(codeNode.kind, "code");
 assert.equal(codeNode.code, "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);");
 assert.deepEqual(codeNode.position, { x: 640, y: 260 });
-assert.equal(codeNode.description, "Side effect block");
 assert.deepEqual(codeOutputs("const alpha = 1;\nlet beta = alpha;\nvar gamma;"), ["alpha", "beta", "gamma"]);
 assert.deepEqual(
   codeOutputs(`
@@ -189,9 +196,10 @@ assert.deepEqual(model.controlFlow, [
   { from: "input", to: "client-1" },
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
-  { from: "call-1", to: "code-1" },
+  { from: "call-1", to: "variable-1" },
+  { from: "variable-1", to: "code-1" },
 ]);
-assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "code-1"), ["input", "client", "result", "user"]);
+assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "code-1"), ["input", "client", "result", "user", "greeting"]);
 
 const multiInputSource = [
   "// @moduleflow:start",
@@ -659,7 +667,6 @@ assert.equal(formattedModel.nodes.length, 4);
 
 const formattedInput = formattedModel.nodes[0];
 assert.deepEqual(formattedInput.position, { x: 1, y: 2 });
-assert.equal(formattedInput.description, "Formatted input");
 assert.equal(formattedInput.returnSource, "distance");
 
 const classNode = formattedModel.nodes[1];
@@ -791,7 +798,6 @@ assert.equal(localCallNode.kind, "call");
 assert.equal(localCallNode.exportName, "chooseStatus");
 assert.deepEqual(localCallNode.inputMappings, { arg1: "input.age", arg2: "input.hasConsent" });
 assert.deepEqual(localCallNode.position, { x: 10, y: 20 });
-assert.equal(localCallNode.description, "Local helper outside ModuleFlow");
 assert.match(localCallNode.warning, /Function export "chooseStatus" was not found/);
 
 const expressionModel = createModelFromSource("main.js", `
@@ -855,7 +861,6 @@ export async function main(input) {
 `, []);
 assert.deepEqual(idOwnedMetadataModel.nodes.map((node) => node.id), ["input", "status-node"]);
 assert.equal(idOwnedMetadataModel.nodes[0].returnSource, "status");
-assert.equal(idOwnedMetadataModel.nodes[1].description, "Should attach");
 
 const legacyGroupModel = createModelFromSource("main.js", `
 // @moduleflow:start

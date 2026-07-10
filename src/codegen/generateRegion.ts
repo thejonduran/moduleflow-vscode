@@ -11,7 +11,9 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
     node.kind === "input" ? "kind:input" : undefined,
     node.kind === "code" ? "kind:code" : undefined,
     node.kind === "markdown" ? "kind:markdown" : undefined,
+    node.kind === "variable" ? "kind:variable" : undefined,
     node.kind === "moduleFlowCall" ? "kind:moduleFlowCall" : undefined,
+    node.kind === "variable" ? `valueType:${node.valueType}` : undefined,
     node.kind === "code" && node.label !== "code" ? `label:${JSON.stringify(node.label)}` : undefined,
     node.kind === "markdown" && node.parentNodeId ? `parent:${node.parentNodeId}` : undefined
   ].filter(Boolean);
@@ -21,14 +23,8 @@ function positionCommentFor(node: ModuleFlowNode): string | undefined {
     : undefined;
 }
 
-function descriptionCommentFor(node: ModuleFlowNode): string | undefined {
-  return node.description
-    ? `  // @moduleflow:description ${node.id} ${JSON.stringify(node.description)}`
-    : undefined;
-}
-
 function metadataCommentsFor(node: ModuleFlowNode): string {
-  return [positionCommentFor(node), descriptionCommentFor(node)].filter(Boolean).join("\n");
+  return [positionCommentFor(node)].filter(Boolean).join("\n");
 }
 
 function markdownCommentsFor(node: Extract<ModuleFlowNode, { kind: "markdown" }>): string | undefined {
@@ -61,6 +57,34 @@ function moduleFlowFunctionParams(nodes: ModuleFlowNode[], inputNodeId: string):
   return inputNode ? inputParamsFor(inputNode) : [{ name: "input", required: true }];
 }
 
+function escapedTemplateString(value: string): string {
+  return `\`${value.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${")}\``;
+}
+
+function variableLiteralFor(node: Extract<ModuleFlowNode, { kind: "variable" }>): string {
+  if (node.valueType === "string") {
+    return escapedTemplateString(node.value);
+  }
+
+  if (node.valueType === "number") {
+    return node.value.trim() || "0";
+  }
+
+  if (node.valueType === "boolean") {
+    return node.value === "true" ? "true" : "false";
+  }
+
+  if (node.valueType === "array") {
+    return "[]";
+  }
+
+  if (node.valueType === "object") {
+    return "{}";
+  }
+
+  return "null";
+}
+
 function statementFor(node: ModuleFlowNode, nodes: ModuleFlowNode[]): string | undefined {
   const metadataComments = metadataCommentsFor(node);
   const prefix = metadataComments ? `${metadataComments}\n` : "";
@@ -71,6 +95,10 @@ function statementFor(node: ModuleFlowNode, nodes: ModuleFlowNode[]): string | u
       .map((line) => line.trim() ? `  ${line}` : "")
       .join("\n");
     return `${prefix}${indentedCode}\n  // @moduleflow:node:end ${node.id}`;
+  }
+
+  if (node.kind === "variable") {
+    return `${prefix}  const ${node.variableName} = ${variableLiteralFor(node)};`;
   }
 
   if (node.kind === "classInstance") {

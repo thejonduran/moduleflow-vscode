@@ -2,7 +2,7 @@ import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 import { inspectModuleFlowRegion } from "../codegen/moduleFlowRegion";
-import { ControlFlowEdge, ExportParameter, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition } from "../types";
+import { ControlFlowEdge, ExportParameter, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition, VariableValueType } from "../types";
 
 type ToolExportMatch = {
   toolModule: ImportedToolModule;
@@ -14,12 +14,12 @@ type Metadata = {
   kind?: string;
   label?: string;
   parentNodeId?: string;
+  valueType?: VariableValueType;
   position?: NodePosition;
   size?: {
     width: number;
     height: number;
   };
-  description?: string;
   code?: string;
   markdown?: string;
 };
@@ -92,7 +92,7 @@ function statementComments(statement: t.Statement): t.Comment[] {
   return statement.leadingComments ?? [];
 }
 
-function parseDescription(raw: string): string {
+function parseMetadataLiteral(raw: string): string {
   try {
     return JSON.parse(raw) as string;
   } catch {
@@ -102,7 +102,11 @@ function parseDescription(raw: string): string {
 
 function parseMetadataString(rest: string, key: string): string | undefined {
   const match = new RegExp(`\\b${key}:(\"(?:\\\\.|[^\"\\\\])*\"|\\S+)`).exec(rest);
-  return match ? parseDescription(match[1]) : undefined;
+  return match ? parseMetadataLiteral(match[1]) : undefined;
+}
+
+function isVariableValueType(value: string): value is VariableValueType {
+  return ["string", "number", "boolean", "array", "object", "null"].includes(value);
 }
 
 function parseMetadataComment(value: string): { nodeId: string; metadata: Metadata } | undefined {
@@ -131,6 +135,10 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
     if (kindMatch) {
       metadata.kind = kindMatch[1];
     }
+    const valueTypeMatch = /\bvalueType:(\w+)/.exec(rest);
+    if (valueTypeMatch && isVariableValueType(valueTypeMatch[1])) {
+      metadata.valueType = valueTypeMatch[1];
+    }
     const label = parseMetadataString(rest, "label");
     if (label) {
       metadata.label = label;
@@ -142,18 +150,6 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
     return { nodeId, metadata };
   }
 
-  const descriptionMatch = /^@moduleflow:description\s+(\S+)\s+(.+)$/.exec(value);
-  if (descriptionMatch) {
-    const [, nodeId, encodedDescription] = descriptionMatch;
-    return {
-      nodeId,
-      metadata: {
-        nodeId,
-        description: parseDescription(encodedDescription)
-      }
-    };
-  }
-
   const codeMatch = /^@moduleflow:code\s+(\S+)\s+(.+)$/.exec(value);
   if (codeMatch) {
     const [, nodeId, encodedCode] = codeMatch;
@@ -161,7 +157,7 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
       nodeId,
       metadata: {
         nodeId,
-        code: parseDescription(encodedCode)
+        code: parseMetadataLiteral(encodedCode)
       }
     };
   }
@@ -173,7 +169,7 @@ function parseMetadataComment(value: string): { nodeId: string; metadata: Metada
       nodeId,
       metadata: {
         nodeId,
-        markdown: parseDescription(encodedMarkdown)
+        markdown: parseMetadataLiteral(encodedMarkdown)
       }
     };
   }
@@ -281,6 +277,28 @@ function unwrapAwait(expression: t.Expression): { expression: t.Expression; asyn
     expression,
     async: false
   };
+}
+
+function valueForVariableExpression(expression: t.Expression, valueType: VariableValueType): string {
+  if (valueType === "string") {
+    if (t.isStringLiteral(expression)) {
+      return expression.value;
+    }
+    if (t.isTemplateLiteral(expression) && expression.expressions.length === 0) {
+      return expression.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join("");
+    }
+    return "";
+  }
+
+  if (valueType === "number") {
+    return t.isNumericLiteral(expression) ? String(expression.value) : generate(expression).code;
+  }
+
+  if (valueType === "boolean") {
+    return t.isBooleanLiteral(expression) && expression.value ? "true" : "false";
+  }
+
+  return "";
 }
 
 function identifierName(node: t.Node | null | undefined): string | undefined {
@@ -434,9 +452,6 @@ function markdownNodesFromRegion(source: string): Array<Extract<ModuleFlowNode, 
     if (metadata.size) {
       node.size = metadata.size;
     }
-    if (metadata.description) {
-      node.description = metadata.description;
-    }
     if (metadata.parentNodeId) {
       node.parentNodeId = metadata.parentNodeId;
     }
@@ -545,8 +560,7 @@ export function createModelFromSource(targetFile: string, source: string, import
             kind: "code",
             label: codeStartMetadata.label ?? "code",
             code: inlineCode,
-            position: codeStartMetadata.position,
-            description: codeStartMetadata.description
+            position: codeStartMetadata.position
           });
           statementNodeIds.push(nodeId);
         } else {
@@ -569,8 +583,7 @@ export function createModelFromSource(targetFile: string, source: string, import
             kind: "code",
             label: codeStartMetadata.label ?? "code",
             code: codeForStatements(codeStatements),
-            position: codeStartMetadata.position,
-            description: codeStartMetadata.description
+            position: codeStartMetadata.position
           });
           statementNodeIds.push(nodeId);
           statementIndex = endIndex;
@@ -592,8 +605,7 @@ export function createModelFromSource(targetFile: string, source: string, import
           kind: "code",
           label: metadata.current.label ?? "code",
           code: metadata.current.code,
-          position: metadata.current.position,
-          description: metadata.current.description
+          position: metadata.current.position
         });
         statementNodeIds.push(nodeId);
         statementIndex += statementCountForCode(metadata.current.code) - 1;
@@ -608,6 +620,21 @@ export function createModelFromSource(targetFile: string, source: string, import
       const { variableName } = declarator;
       const { expression, async } = unwrapAwait(declarator.init);
       const currentMetadata = metadata.current ?? {};
+
+      if (currentMetadata.kind === "variable" && currentMetadata.valueType) {
+        const nodeId = currentMetadata.nodeId ?? `${functionName}-node-${nodeIndex++}`;
+        parsedNodes.push({
+          id: nodeId,
+          kind: "variable",
+          label: "variable",
+          variableName,
+          valueType: currentMetadata.valueType,
+          value: valueForVariableExpression(expression, currentMetadata.valueType),
+          position: currentMetadata.position
+        });
+        statementNodeIds.push(nodeId);
+        continue;
+      }
 
       if (t.isNewExpression(expression)) {
         const exportName = identifierName(expression.callee);
@@ -631,7 +658,6 @@ export function createModelFromSource(targetFile: string, source: string, import
           inputMappings: mappingsFor(params, args),
           variableName,
           position: currentMetadata.position,
-          description: currentMetadata.description,
           warning: found?.toolExport.kind === "class" ? undefined : `Class export "${exportName}" was not found.`
         });
         statementNodeIds.push(nodeId);
@@ -662,7 +688,6 @@ export function createModelFromSource(targetFile: string, source: string, import
           variableName,
           async: method?.async || async,
           position: currentMetadata.position,
-          description: currentMetadata.description,
           warning: method ? undefined : `Method "${methodName}" was not found on "${exportName ?? instanceVariableName}".`
         });
         statementNodeIds.push(nodeId);
@@ -688,8 +713,7 @@ export function createModelFromSource(targetFile: string, source: string, import
             functionNodeId: moduleFlowInputId,
             inputMappings: mappingsFor(moduleFlowParams, args),
             variableName,
-            position: currentMetadata.position,
-            description: currentMetadata.description
+            position: currentMetadata.position
           });
           statementNodeIds.push(nodeId);
           continue;
@@ -709,7 +733,6 @@ export function createModelFromSource(targetFile: string, source: string, import
           variableName,
           async: found?.toolExport.async || async,
           position: currentMetadata.position,
-          description: currentMetadata.description,
           warning: found && found.toolExport.kind !== "class" ? undefined : `Function export "${exportName}" was not found.`
         });
         statementNodeIds.push(nodeId);
