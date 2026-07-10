@@ -5,6 +5,7 @@ const { createModelFromSource } = require("../out/graph/jsToGraph");
 const { parseExports, parseLocalFunctions, parseModuleFlowFunctions } = require("../out/analyzer/parseExports");
 const { codeDependencies } = require("../out/graph/codeDependencies");
 const { codeOutputs } = require("../out/graph/codeOutputs");
+const { variableExpressionDependencies } = require("../out/graph/variableExpressions");
 const { previousScopedSourceRefs, previousScopedSources } = require("../out/graph/flowDiscovery");
 
 const imports = [
@@ -107,7 +108,21 @@ const nodes = [
     variableName: "greeting",
     valueType: "string",
     value: "Hello ${user}\nWelcome back",
+    inputMappings: {},
     position: { x: 600, y: 210 }
+  },
+  {
+    id: "variable-2",
+    kind: "variable",
+    label: "variable",
+    variableName: "config",
+    valueType: "object",
+    value: "{ user, token }",
+    inputMappings: {
+      user: "user",
+      token: "input.token"
+    },
+    position: { x: 620, y: 240 }
   },
   {
     id: "code-1",
@@ -121,14 +136,16 @@ const nodes = [
 const source = buildRegion("main", nodes);
 assert.match(source, /@moduleflow:node variable-1 x:600 y:210 kind:variable valueType:string/);
 assert.ok(source.includes("const greeting = `Hello \\${user}\nWelcome back`;"));
+assert.match(source, /@moduleflow:node variable-2 x:620 y:240 kind:variable valueType:object/);
+assert.ok(source.includes("token: input.token"));
 assert.match(source, /@moduleflow:node code-1 x:640 y:260 kind:code/);
 assert.match(source, /@moduleflow:node:end code-1/);
 assert.doesNotMatch(source, /@moduleflow:code code-1/);
 const model = createModelFromSource("main.js", source, imports);
 
-assert.equal(model.nodes.length, 6);
+assert.equal(model.nodes.length, 7);
 
-const [input, client, method, call, variableNode, codeNode] = model.nodes;
+const [input, client, method, call, variableNode, objectVariableNode, codeNode] = model.nodes;
 assert.deepEqual(input.position, { x: 12, y: 34 });
 assert.equal(input.returnSource, "user");
 
@@ -154,6 +171,11 @@ assert.equal(variableNode.variableName, "greeting");
 assert.equal(variableNode.valueType, "string");
 assert.equal(variableNode.value, "Hello ${user}\nWelcome back");
 assert.deepEqual(variableNode.position, { x: 600, y: 210 });
+
+assert.equal(objectVariableNode.kind, "variable");
+assert.equal(objectVariableNode.variableName, "config");
+assert.equal(objectVariableNode.valueType, "object");
+assert.match(objectVariableNode.value, /token: input\.token/);
 
 assert.equal(codeNode.kind, "code");
 assert.equal(codeNode.code, "const auditedUser = user;\nconsole.log(\"user\", auditedUser);\nawait audit(auditedUser);");
@@ -191,15 +213,18 @@ assert.deepEqual(
   ["people"]
 );
 assert.deepEqual(codeDependencies("a = b;"), ["a", "b"]);
+assert.deepEqual(variableExpressionDependencies("object", "{ user, token, url: input.baseUrl }"), ["user", "token", "input"]);
+assert.deepEqual(variableExpressionDependencies("array", "[user, token]"), ["user", "token"]);
 
 assert.deepEqual(model.controlFlow, [
   { from: "input", to: "client-1" },
   { from: "client-1", to: "method-1" },
   { from: "method-1", to: "call-1" },
   { from: "call-1", to: "variable-1" },
-  { from: "variable-1", to: "code-1" },
+  { from: "variable-1", to: "variable-2" },
+  { from: "variable-2", to: "code-1" },
 ]);
-assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "code-1"), ["input", "client", "result", "user", "greeting"]);
+assert.deepEqual(previousScopedSources(model.nodes, model.controlFlow, "code-1"), ["input", "client", "result", "user", "greeting", "config"]);
 
 const multiInputSource = [
   "// @moduleflow:start",

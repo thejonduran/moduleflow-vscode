@@ -1,5 +1,6 @@
 import { ControlFlowEdge, ModuleFlowNode } from "../types";
 import { discoverFlows } from "../graph/flowDiscovery";
+import { mapVariableExpression } from "../graph/variableExpressions";
 import { assertWritableModuleFlowRegion, inspectModuleFlowRegion, startMarker, endMarker } from "./moduleFlowRegion";
 
 function positionCommentFor(node: ModuleFlowNode): string | undefined {
@@ -75,11 +76,11 @@ function variableLiteralFor(node: Extract<ModuleFlowNode, { kind: "variable" }>)
   }
 
   if (node.valueType === "array") {
-    return "[]";
+    return mapVariableExpression("array", node.value, node.inputMappings);
   }
 
   if (node.valueType === "object") {
-    return "{}";
+    return mapVariableExpression("object", node.value, node.inputMappings);
   }
 
   return "null";

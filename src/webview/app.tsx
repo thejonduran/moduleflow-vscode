@@ -30,6 +30,7 @@ import { ExportParameter, ModuleFlowModel, ModuleFlowNode, VariableValueType } f
 import { codeDependencies } from "../graph/codeDependencies";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows, previousScopedSourceRefs, previousScopedSources } from "../graph/flowDiscovery";
+import { variableExpressionDependencies } from "../graph/variableExpressions";
 
 declare const acquireVsCodeApi: () => {
   postMessage: (message: unknown) => void;
@@ -119,6 +120,28 @@ function inputParamsFor(node: Extract<ModuleFlowNode, { kind: "input" }> | undef
 
 function moduleFlowCallParams(model: ModuleFlowModel | undefined, node: Extract<ModuleFlowNode, { kind: "moduleFlowCall" }>): ExportParameter[] {
   return inputParamsFor(moduleFlowFunctionFor(model, node.functionNodeId));
+}
+
+function variableExpressionInputMappings(valueType: VariableValueType, value: string, previousMappings: Record<string, string> = {}): Record<string, string> {
+  return Object.fromEntries(
+    variableExpressionDependencies(valueType, value).map((name) => [name, previousMappings[name] ?? name])
+  );
+}
+
+function defaultVariableValue(valueType: VariableValueType): string {
+  if (valueType === "array") {
+    return "[]";
+  }
+  if (valueType === "object") {
+    return "{}";
+  }
+  if (valueType === "boolean") {
+    return "false";
+  }
+  if (valueType === "number") {
+    return "0";
+  }
+  return "";
 }
 
 function outputNamesForNode(node: ModuleFlowNode): string[] {
@@ -280,7 +303,7 @@ function toFlowEdges(model: ModuleFlowModel): Edge[] {
     }
   }));
   for (const node of model.nodes) {
-    if (!hasParams(node) && node.kind !== "moduleFlowCall") {
+    if (!hasInputMappings(node)) {
       continue;
     }
 
@@ -1128,7 +1151,11 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         ? (value === "true" ? "true" : "false")
         : valueType === "string"
           ? value
-          : "";
+          : valueType === "array"
+            ? (value.trim() || "[]")
+            : valueType === "object"
+              ? (value.trim() || "{}")
+              : "";
 
     if (model && onModelChange) {
       const nextModel = cloneModel(model);
@@ -1136,6 +1163,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
       if (node?.kind === "variable") {
         node.valueType = valueType;
         node.value = nextValue;
+        node.inputMappings = variableExpressionInputMappings(valueType, nextValue, node.inputMappings);
         onModelChange(nextModel);
         window.requestAnimationFrame(() => updateNodeInternals(selectedNode.id));
       }
@@ -1338,6 +1366,8 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
         ? moduleFlowCallParams(model, selectedNode).map((param) => ({ id: param.name, label: param.name }))
         : selectedNode.kind === "code"
           ? codeDependencies(selectedNode.code).map((name) => ({ id: `dependency:${name}`, label: name }))
+        : selectedNode.kind === "variable"
+          ? variableExpressionDependencies(selectedNode.valueType, selectedNode.value).map((name) => ({ id: name, label: name }))
         : [];
   const outputRows = selectedNode.kind === "input"
     ? inputParamsFor(selectedNode).map((param) => ({ id: param.name, label: param.name }))
@@ -1354,7 +1384,7 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
   const scopedInputOptions = inputParamsFor(flowInputNode).map((param) => param.name);
   const cardStyle: React.CSSProperties | undefined = selectedNode.kind === "code" && codePropertiesOpen
     ? { width: codeNodeWidth(selectedNode.code) }
-    : selectedNode.kind === "variable" && selectedNode.valueType === "string" && variablePropertiesOpen
+    : selectedNode.kind === "variable" && ["string", "array", "object"].includes(selectedNode.valueType) && variablePropertiesOpen
       ? { width: textEditorWidth(selectedNode.value) }
     : undefined;
 
@@ -1453,7 +1483,10 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
               Type
               <select
                 value={selectedNode.valueType}
-                onChange={(event) => updateVariableLocal(event.currentTarget.value as VariableValueType, "")}
+                onChange={(event) => {
+                  const valueType = event.currentTarget.value as VariableValueType;
+                  updateVariableLocal(valueType, defaultVariableValue(valueType));
+                }}
               >
                 <option value="string">String</option>
                 <option value="number">Number</option>
@@ -1470,6 +1503,16 @@ const ModuleFlowCard = memo(({ data }: NodeProps<Node<FlowNodeData>>) => {
                   value={selectedNode.value}
                   onChange={(value) => updateVariableLocal("string", value, { commit: false })}
                   onCommit={(value) => updateVariableLocal("string", value)}
+                />
+              </>
+            )}
+            {(selectedNode.valueType === "array" || selectedNode.valueType === "object") && (
+              <>
+                <h3>Value</h3>
+                <CodeEditor
+                  value={selectedNode.value || defaultVariableValue(selectedNode.valueType)}
+                  onChange={(value) => updateVariableLocal(selectedNode.valueType, value, { commit: false })}
+                  onCommit={(value) => updateVariableLocal(selectedNode.valueType, value)}
                 />
               </>
             )}

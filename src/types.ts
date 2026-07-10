@@ -85,6 +85,7 @@ export type ModuleFlowNode =
       variableName: string;
       valueType: VariableValueType;
       value: string;
+      inputMappings: InputMappings;
       position?: NodePosition;
       size?: NodeSize;
       warning?: string;

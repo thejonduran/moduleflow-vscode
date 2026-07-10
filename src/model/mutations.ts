@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { buildRegion, upsertRegion } from "../codegen/generateRegion";
 import { codeOutputs } from "../graph/codeOutputs";
 import { discoverFlows } from "../graph/flowDiscovery";
+import { variableExpressionDependencies } from "../graph/variableExpressions";
 import { ExportParameter, ModuleExport, ModuleFlowModel, ModuleFlowNode, VariableValueType } from "../types";
 import { loadModelFromFile, readText, writeText } from "./loadModel";
 
@@ -97,7 +98,21 @@ function normalizeVariableValue(valueType: VariableValueType, value: string): st
     return value;
   }
 
+  if (valueType === "array") {
+    return value.trim() || "[]";
+  }
+
+  if (valueType === "object") {
+    return value.trim() || "{}";
+  }
+
   return "";
+}
+
+function variableInputMappings(valueType: VariableValueType, value: string, previousMappings: Record<string, string> = {}): Record<string, string> {
+  return Object.fromEntries(
+    variableExpressionDependencies(valueType, value).map((name) => [name, previousMappings[name] ?? name])
+  );
 }
 
 function findToolExport(model: ModuleFlowModel, modulePath: string, exportName: string): ModuleExport | undefined {
@@ -452,6 +467,7 @@ export async function addVariableNode(targetUri: vscode.Uri, model: ModuleFlowMo
     variableName,
     valueType: "string",
     value: "",
+    inputMappings: {},
     position: message.position
   });
   await persistModel(targetUri, model);
@@ -646,6 +662,7 @@ export async function updateVariableNode(
 
   node.valueType = message.valueType;
   node.value = normalizeVariableValue(message.valueType, message.value);
+  node.inputMappings = variableInputMappings(node.valueType, node.value, node.inputMappings);
   await persistModel(targetUri, model);
 }
 

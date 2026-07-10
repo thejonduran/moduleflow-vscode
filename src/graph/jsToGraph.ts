@@ -2,6 +2,7 @@ import generate from "@babel/generator";
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 import { inspectModuleFlowRegion } from "../codegen/moduleFlowRegion";
+import { variableExpressionDependencies } from "./variableExpressions";
 import { ControlFlowEdge, ExportParameter, ImportedToolModule, ModuleFlowModel, ModuleFlowNode, NodePosition, VariableValueType } from "../types";
 
 type ToolExportMatch = {
@@ -296,6 +297,10 @@ function valueForVariableExpression(expression: t.Expression, valueType: Variabl
 
   if (valueType === "boolean") {
     return t.isBooleanLiteral(expression) && expression.value ? "true" : "false";
+  }
+
+  if (valueType === "array" || valueType === "object") {
+    return generate(expression).code;
   }
 
   return "";
@@ -630,6 +635,10 @@ export function createModelFromSource(targetFile: string, source: string, import
           variableName,
           valueType: currentMetadata.valueType,
           value: valueForVariableExpression(expression, currentMetadata.valueType),
+          inputMappings: Object.fromEntries(variableExpressionDependencies(
+            currentMetadata.valueType,
+            valueForVariableExpression(expression, currentMetadata.valueType)
+          ).map((name) => [name, name])),
           position: currentMetadata.position
         });
         statementNodeIds.push(nodeId);
